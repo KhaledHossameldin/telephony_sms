@@ -1,6 +1,6 @@
 name: telephony_sms
 description: A Flutter plugin that allows you to send SMS messages in the background.
-version: 0.0.1
+version: 0.0.2
 repository: https://github.com/KhaledHossameldin/telephony_sms
 platforms:
   android:
