@@ -35,8 +35,9 @@ class _MyAppState extends State<MyApp> {
                 child: const Text('Check Permission'),
               ),
               ElevatedButton(
-                onPressed: () {
-                  _telephonySMS.sendSMS(phone: "PHONE", message: "MESSAGE");
+                onPressed: () async {
+                  await _telephonySMS.sendSMS(
+                      phone: "PHONE", message: "MESSAGE");
                 },
                 child: const Text('Send SMS'),
               ),
