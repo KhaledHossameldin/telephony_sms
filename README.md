@@ -4,7 +4,7 @@
 
 A Flutter plugin that allows you to send SMS messages in the background.
 
-Note that his plugin works only with Android as it uses Telephony which is a package provided by Android
+Note that his plugin works only supports Android as it uses Telephony which is a package provided by Android
 
 |             | Android |
 | ----------- | ------- |
