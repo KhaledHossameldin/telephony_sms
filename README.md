@@ -1,10 +1,12 @@
 # telephony_sms
 
+[![pub package](https://img.shields.io/pub/v/telephony_sms.svg)](https://pub.dev/packages/telephony_sms)
+
 <?code-excerpt path-base="example/lib"?>
 
 A Flutter plugin that allows you to send SMS messages in the background.
 
-Note that his plugin works only supports Android as it uses Telephony which is a package provided by Android
+This plugin supports Android only, as it uses Android's Telephony API.
 
 |             | Android |
 | ----------- | ------- |
