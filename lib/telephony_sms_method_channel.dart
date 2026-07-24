@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'telephony_sms_completion.dart';
 import 'telephony_sms_exception.dart';
 import 'telephony_sms_platform_interface.dart';
 
@@ -13,8 +14,9 @@ class MethodChannelTelephonySMS extends TelephonySMSPlatform {
   @override
   Future<bool> requestPermission() async {
     try {
-      final granted =
-          await methodChannel.invokeMethod<bool>('requestPermission');
+      final granted = await methodChannel.invokeMethod<bool>(
+        'requestPermission',
+      );
       return granted ?? false;
     } on PlatformException catch (e) {
       throw _asTelephonySmsException(e);
@@ -25,11 +27,15 @@ class MethodChannelTelephonySMS extends TelephonySMSPlatform {
   Future<void> sendSMS({
     required String phone,
     required String message,
+    SmsCompletion completeOn = SmsCompletion.sent,
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     try {
       await methodChannel.invokeMethod<void>('sendSMS', {
         'phone': phone,
         'message': message,
+        'completeOn': completeOn.value,
+        'timeoutMillis': timeout.inMilliseconds,
       });
     } on PlatformException catch (e) {
       throw _asTelephonySmsException(e);

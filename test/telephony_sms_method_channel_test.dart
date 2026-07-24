@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:telephony_sms/telephony_sms_completion.dart';
 import 'package:telephony_sms/telephony_sms_exception.dart';
 import 'package:telephony_sms/telephony_sms_method_channel.dart';
 
@@ -67,7 +68,8 @@ void main() {
   });
 
   group('sendSMS', () {
-    test('invokes sendSMS with exactly phone and message', () async {
+    test('invokes sendSMS with phone, message, completeOn and timeout',
+        () async {
       mockHandler();
 
       await platform.sendSMS(phone: '+201000000000', message: 'hello');
@@ -77,6 +79,26 @@ void main() {
       expect(log.single.arguments, {
         'phone': '+201000000000',
         'message': 'hello',
+        'completeOn': 'sent',
+        'timeoutMillis': 30000,
+      });
+    });
+
+    test('sends the delivered completion and a custom timeout', () async {
+      mockHandler();
+
+      await platform.sendSMS(
+        phone: 'PHONE',
+        message: 'MESSAGE',
+        completeOn: SmsCompletion.delivered,
+        timeout: const Duration(minutes: 2),
+      );
+
+      expect(log.single.arguments, {
+        'phone': 'PHONE',
+        'message': 'MESSAGE',
+        'completeOn': 'delivered',
+        'timeoutMillis': 120000,
       });
     });
 
@@ -116,5 +138,31 @@ void main() {
         ),
       );
     });
+
+    // These are the codes that only became reachable once the send result was
+    // actually reported back from the radio.
+    for (final entry in const {
+      'no_service': TelephonySmsErrorCode.noService,
+      'radio_off': TelephonySmsErrorCode.radioOff,
+      'null_pdu': TelephonySmsErrorCode.nullPdu,
+      'generic_failure': TelephonySmsErrorCode.genericFailure,
+      'send_timeout': TelephonySmsErrorCode.sendTimeout,
+      'not_delivered': TelephonySmsErrorCode.notDelivered,
+      'cancelled': TelephonySmsErrorCode.cancelled,
+    }.entries) {
+      test('maps ${entry.key} onto ${entry.value.name}', () async {
+        mockHandler(
+          error: PlatformException(code: entry.key, message: 'Failed.'),
+        );
+
+        await expectLater(
+          platform.sendSMS(phone: 'PHONE', message: 'MESSAGE'),
+          throwsA(
+            isA<TelephonySmsException>()
+                .having((e) => e.code, 'code', entry.value),
+          ),
+        );
+      });
+    }
   });
 }

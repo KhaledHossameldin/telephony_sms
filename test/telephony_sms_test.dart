@@ -14,6 +14,8 @@ class MockTelephonySMSPlatform
 
   String? sentPhone;
   String? sentMessage;
+  SmsCompletion? sentCompleteOn;
+  Duration? sentTimeout;
 
   @override
   Future<bool> requestPermission() async {
@@ -23,11 +25,18 @@ class MockTelephonySMSPlatform
   }
 
   @override
-  Future<void> sendSMS({required String phone, required String message}) async {
+  Future<void> sendSMS({
+    required String phone,
+    required String message,
+    SmsCompletion completeOn = SmsCompletion.sent,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final failure = this.failure;
     if (failure != null) throw failure;
     sentPhone = phone;
     sentMessage = message;
+    sentCompleteOn = completeOn;
+    sentTimeout = timeout;
   }
 }
 
@@ -80,6 +89,31 @@ void main() {
 
       expect(fakePlatform.sentPhone, '+201000000000');
       expect(fakePlatform.sentMessage, 'hello');
+    });
+
+    test('defaults to completing on sent, with a 30 second timeout', () async {
+      final fakePlatform = MockTelephonySMSPlatform();
+      TelephonySMSPlatform.instance = fakePlatform;
+
+      await TelephonySMS().sendSMS(phone: 'PHONE', message: 'MESSAGE');
+
+      expect(fakePlatform.sentCompleteOn, SmsCompletion.sent);
+      expect(fakePlatform.sentTimeout, const Duration(seconds: 30));
+    });
+
+    test('forwards an explicit completeOn and timeout', () async {
+      final fakePlatform = MockTelephonySMSPlatform();
+      TelephonySMSPlatform.instance = fakePlatform;
+
+      await TelephonySMS().sendSMS(
+        phone: 'PHONE',
+        message: 'MESSAGE',
+        completeOn: SmsCompletion.delivered,
+        timeout: const Duration(minutes: 2),
+      );
+
+      expect(fakePlatform.sentCompleteOn, SmsCompletion.delivered);
+      expect(fakePlatform.sentTimeout, const Duration(minutes: 2));
     });
 
     test('rethrows a TelephonySmsException', () async {

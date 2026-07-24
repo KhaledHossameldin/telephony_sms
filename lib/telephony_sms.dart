@@ -1,5 +1,7 @@
+import 'telephony_sms_completion.dart';
 import 'telephony_sms_platform_interface.dart';
 
+export 'telephony_sms_completion.dart';
 export 'telephony_sms_exception.dart';
 
 /// Sends SMS messages in the background on Android.
@@ -17,19 +19,42 @@ class TelephonySMS {
 
   /// Sends [message] to [phone].
   ///
-  /// Completes once the message has been handed to the radio. Throws a
-  /// [TelephonySmsException] if the permission is missing, the arguments are
-  /// invalid, or the platform rejected the message.
+  /// By default this completes once the radio confirms the message was sent, and
+  /// throws a [TelephonySmsException] otherwise. That makes a retry loop
+  /// straightforward:
   ///
-  /// Messages longer than a single SMS part (160 GSM-7 characters, or 70 when
-  /// any character falls outside GSM-7 — Arabic and emoji do) are truncated.
+  /// ```dart
+  /// try {
+  ///   await telephonySMS.sendSMS(phone: phone, message: message);
+  /// } on TelephonySmsException catch (e) {
+  ///   if (e.code == TelephonySmsErrorCode.noService ||
+  ///       e.code == TelephonySmsErrorCode.radioOff) {
+  ///     // Transient — worth retrying later.
+  ///   }
+  /// }
+  /// ```
+  ///
+  /// Pass [completeOn] as `SmsCompletion.delivered` to wait for the carrier's
+  /// delivery report instead. Read that value's documentation first: many
+  /// carriers never send one.
+  ///
+  /// Messages longer than a single SMS part are split and sent as a multipart
+  /// message. The send succeeds only if every part does.
+  ///
+  /// [timeout] bounds the wait for confirmation, so a broadcast that never
+  /// arrives cannot hang the future. Values below one second are raised to one
+  /// second.
   Future<void> sendSMS({
     required String phone,
     required String message,
+    SmsCompletion completeOn = SmsCompletion.sent,
+    Duration timeout = const Duration(seconds: 30),
   }) {
     return TelephonySMSPlatform.instance.sendSMS(
       phone: phone,
       message: message,
+      completeOn: completeOn,
+      timeout: timeout,
     );
   }
 }
