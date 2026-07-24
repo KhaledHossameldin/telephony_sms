@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Format, analyze, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze package
+        run: flutter analyze
+
+      - name: Run package tests
+        run: flutter test
+
+  android:
+    name: Android build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+
+      - name: Analyze example
+        working-directory: example
+        run: flutter analyze
+
+      - name: Run example widget tests
+        working-directory: example
+        run: flutter test
+
+      # Must run before the Gradle step below: the Gradle wrapper is gitignored
+      # by the Flutter template and is written by the tool during an Android
+      # build (injectGradleWrapperIfNeeded). Reordering these breaks the build.
+      - name: Build debug APK
+        working-directory: example
+        run: flutter build apk --debug
+
+      - name: Run plugin Kotlin unit tests
+        working-directory: example/android
+        run: ./gradlew :telephony_sms:testDebugUnitTest

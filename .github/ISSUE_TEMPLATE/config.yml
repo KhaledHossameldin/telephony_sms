@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/KhaledHossameldin/telephony_sms/discussions
+    about: Ask how to use the plugin, rather than opening a bug report.
+  - name: Security vulnerability
+    url: https://github.com/KhaledHossameldin/telephony_sms/security/advisories/new
+    about: Report privately. Do not open a public issue for security problems.
+  - name: Google Play SEND_SMS policy
+    url: https://support.google.com/googleplay/android-developer/answer/10208820
+    about: Questions about whether your app is allowed to request SEND_SMS are for Google, not this plugin.

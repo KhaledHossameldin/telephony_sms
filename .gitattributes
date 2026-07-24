@@ -1,0 +1,32 @@
+# Deliberately no `text` or `eol` rules.
+#
+# A blanket `* text=auto eol=lf` re-normalizes the entire tree whenever the
+# active .gitattributes changes. Because this file exists on some branches and
+# not others, that turns every branch switch into a wall of phantom
+# modifications and aborts rebases. Every tracked file here is already LF, and
+# no .bat or .cmd files are tracked, so the rules bought nothing.
+#
+# Line endings are handled by .editorconfig instead, which applies when a file
+# is edited rather than when it is checked out.
+
+# Binary: never diff, never normalize.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.ttf    binary
+*.otf    binary
+*.jar    binary
+*.keystore binary
+*.jks    binary
+*.apk    binary
+*.aab    binary
+
+# Generated: collapse in diffs and exclude from language statistics.
+*.lock linguist-generated
+**/GeneratedPluginRegistrant.java linguist-generated
+
+# The example app is a demonstration, not the substance of the package.
+example/** linguist-documentation

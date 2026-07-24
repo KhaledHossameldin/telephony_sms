@@ -8,19 +8,31 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-
 import 'package:telephony_sms/telephony_sms.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('requestPermission test', (widgetTester) async {
-    final TelephonySMS plugin = TelephonySMS();
-    expect(plugin.requestPermission(), completes);
+  testWidgets('requestPermission resolves to a bool', (tester) async {
+    final plugin = TelephonySMS();
+
+    // Whether it resolves true or false depends on the device's current grant
+    // state; what matters is that it resolves at all rather than hanging.
+    await expectLater(plugin.requestPermission(), completion(isA<bool>()));
   });
 
-  testWidgets('sendSMS test', (widgetTester) async {
-    final TelephonySMS plugin = TelephonySMS();
-    expect(plugin.sendSMS(phone: 'PHONE', message: 'MESSAGE'), completes);
+  testWidgets('sendSMS rejects an empty phone number', (tester) async {
+    final plugin = TelephonySMS();
+
+    await expectLater(
+      plugin.sendSMS(phone: '', message: 'hello'),
+      throwsA(
+        isA<TelephonySmsException>().having(
+          (e) => e.code,
+          'code',
+          TelephonySmsErrorCode.invalidArguments,
+        ),
+      ),
+    );
   });
 }

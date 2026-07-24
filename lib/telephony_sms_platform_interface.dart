@@ -2,6 +2,11 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'telephony_sms_method_channel.dart';
 
+/// The interface that platform-specific implementations of `telephony_sms`
+/// must extend.
+///
+/// Implementations should extend this class rather than implement it, so that
+/// new members are inherited rather than breaking the build.
 abstract class TelephonySMSPlatform extends PlatformInterface {
   /// Constructs a TelephonySmsPlatform.
   TelephonySMSPlatform() : super(token: _token);
@@ -23,10 +28,12 @@ abstract class TelephonySMSPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  Future<void> requestPermission() {
+  /// Requests the `SEND_SMS` permission, resolving to whether it was granted.
+  Future<bool> requestPermission() {
     throw UnimplementedError('requestPermission() has not been implemented.');
   }
 
+  /// Sends [message] to [phone].
   Future<void> sendSMS({
     required String phone,
     required String message,

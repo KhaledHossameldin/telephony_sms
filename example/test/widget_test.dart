@@ -1,9 +1,7 @@
-// This is a basic Flutter widget test.
+// Widget tests for the example app.
 //
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// These exercise only the UI: the plugin's platform channel is not available in
+// a widget test, so the buttons are checked for presence rather than tapped.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,17 +9,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:telephony_sms_example/main.dart';
 
 void main() {
-  testWidgets('Verify Platform version', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('renders the permission and send actions', (tester) async {
     await tester.pumpWidget(const MyApp());
 
-    // Verify that platform version is retrieved.
     expect(
-      find.byWidgetPredicate(
-        (Widget widget) => widget is Text &&
-                           widget.data!.startsWith('Running on:'),
-      ),
+      find.widgetWithText(ElevatedButton, 'Check Permission'),
       findsOneWidget,
     );
+    expect(find.widgetWithText(ElevatedButton, 'Send SMS'), findsOneWidget);
+  });
+
+  testWidgets('renders the phone and message fields', (tester) async {
+    await tester.pumpWidget(const MyApp());
+
+    expect(find.widgetWithText(TextField, 'Phone number'), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(2));
   });
 }

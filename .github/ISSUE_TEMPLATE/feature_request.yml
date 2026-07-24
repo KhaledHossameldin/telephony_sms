@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a capability the plugin does not have.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three capabilities are already known to be missing and are tracked as
+        deliberate limitations in the README — multipart (long) messages,
+        delivery confirmation, and dual-SIM subscription selection. If you want
+        one of those, say so here and it will be counted as demand rather than
+        closed as a duplicate.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are stuck in, not just the feature you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API
+      description: What would calling this look like from Dart?
+      render: dart
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other plugins, platform channels of your own, workarounds.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: I understand this plugin is Android-only and that iOS cannot send SMS without user interaction.
+          required: true

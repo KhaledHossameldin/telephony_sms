@@ -1,20 +1,24 @@
 # telephony_sms
 
 [![pub package](https://img.shields.io/pub/v/telephony_sms.svg)](https://pub.dev/packages/telephony_sms)
+[![CI](https://github.com/KhaledHossameldin/telephony_sms/actions/workflows/ci.yml/badge.svg)](https://github.com/KhaledHossameldin/telephony_sms/actions/workflows/ci.yml)
+[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](LICENSE)
 
-<?code-excerpt path-base="example/lib"?>
+A Flutter plugin that sends SMS messages in the background, without opening the
+system messaging app.
 
-A Flutter plugin that allows you to send SMS messages in the background.
+Android only. It wraps Android's `SmsManager`, which has no iOS equivalent — iOS
+does not permit sending SMS without user interaction.
 
-This plugin supports Android only, as it uses Android's Telephony API.
-
-|             | Android |
-| ----------- | ------- |
-| **Support** | SDK 16+ |
+|             | Android  |
+| ----------- | -------- |
+| **Support** | SDK 24+  |
 
 ## Setup
 
-To use this plugin you need to add `SEND_SMS` permission in the `AndroidManifest.xml` file. There are `debug`, `main` and `profile` versions which are chosen depending on how you start your app. In general, it's sufficient to add permission only to the `main` version.
+Add the `SEND_SMS` permission to your app's `AndroidManifest.xml`. Android
+projects have `debug`, `main`, and `profile` variants; declaring it in `main` is
+enough, since that manifest is merged into every build type.
 
 ```xml
     <uses-permission android:name="android.permission.SEND_SMS" />
@@ -22,20 +26,74 @@ To use this plugin you need to add `SEND_SMS` permission in the `AndroidManifest
     ...
 ```
 
-## How to use
+The plugin deliberately does **not** declare `SEND_SMS` in its own manifest, so
+that adding the dependency never silently adds a restricted permission to your
+app.
 
-First you need to request for the previously added `SEND_SMS` permission.
+## Usage
 
-```dart
-final _telephonySMS = TelephonySMS();
-
-await _telephonySMS.requestPermission();
-```
-
-Now you can send any SMS message to any phone number desired.
+Request the permission before sending anything. `requestPermission()` resolves
+to whether the permission is granted — it returns `true` immediately if it was
+already granted, and `false` if the user denies the dialog.
 
 ```dart
-await _telephonySMS.sendSMS(phone: "PHONE", message: "MESSAGE");
+final telephonySMS = TelephonySMS();
+
+final granted = await telephonySMS.requestPermission();
+if (!granted) return;
 ```
 
-It is just as simple as that.
+Then send:
+
+```dart
+try {
+  await telephonySMS.sendSMS(phone: '+201000000000', message: 'Hello!');
+} on TelephonySmsException catch (e) {
+  debugPrint('${e.code.name}: ${e.message}');
+}
+```
+
+`sendSMS()` completes once the message has been handed to the radio.
+
+### Error handling
+
+Every platform failure throws a `TelephonySmsException` with a
+`TelephonySmsErrorCode`:
+
+| Code                     | Meaning                                                        |
+| ------------------------ | -------------------------------------------------------------- |
+| `invalidArguments`       | `phone` or `message` was empty or blank                        |
+| `permissionDenied`       | `SEND_SMS` is not granted — call `requestPermission()` first    |
+| `noActivity`             | No activity attached, so the permission dialog cannot be shown  |
+| `activityDetached`       | The activity went away before the permission dialog was answered |
+| `alreadyRequesting`      | A permission request is already in flight                      |
+| `smsManagerUnavailable`  | The device provides no `SmsManager`                            |
+| `sendFailed`             | `SmsManager` rejected the message                              |
+| `noContext`              | The plugin is not attached to a Flutter engine                 |
+| `unknown`                | An error code this version of the plugin does not recognise    |
+
+Note that a denied permission is **not** an exception — `requestPermission()`
+returns `false`. Exceptions are reserved for calls that could not be made.
+
+## Google Play policy
+
+`SEND_SMS` is a [restricted permission][play-sms]. Apps requesting it on Google
+Play must qualify for an eligible use case and submit a permissions declaration,
+or they will be rejected. Check that your app qualifies before shipping.
+
+[play-sms]: https://support.google.com/googleplay/android-developer/answer/10208820
+
+## Limitations
+
+* **Single-part messages only.** Messages longer than one SMS part — 160
+  characters in GSM-7, or 70 when any character falls outside it, which includes
+  all Arabic text and emoji — are truncated. Multipart is not implemented.
+* **No delivery confirmation.** `sendSMS()` completes when the radio accepts the
+  message, not when the recipient receives it.
+* **Default SIM only.** There is no way to choose a subscription on dual-SIM
+  devices.
+
+## Example
+
+See [`example/`](example) for a runnable app that requests the permission and
+sends a message to a number you type in.
