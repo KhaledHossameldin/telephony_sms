@@ -1,0 +1,68 @@
+name: Publish
+
+# Releasing is `git push origin vX.Y.Z`. pub.dev authenticates the run over
+# OIDC, so there is no API token stored anywhere, and it records the repository
+# and tag the archive came from.
+#
+# The tag glob is anchored to a semver shape so a stray tag such as `v-wip`
+# cannot start a release.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+
+# Unlike ci.yml this deliberately does not cancel in progress: a publish must
+# never be interrupted part-way.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # The full CI suite, reused rather than duplicated. `dart pub publish` only
+  # validates packaging, so without this a tag could publish code that does not
+  # compile or pass its tests.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: verify
+    name: Publish to pub.dev
+    runs-on: ubuntu-latest
+    # Requires a manual approval on the `pub.dev` environment. Publishing cannot
+    # be undone — a version can be retracted but never replaced — so a mistaken
+    # or premature tag push should be recoverable with a click, not permanent.
+    environment: pub.dev
+    permissions:
+      # The whole authentication mechanism: GitHub injects an OIDC token that
+      # pub.dev verifies against the repository and tag pattern configured on
+      # the package's admin page. Scoped to this job alone.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # This mirrors dart-lang/setup-dart's own publish.yml, which is the
+      # documented path, with one substitution noted below. Its `dart` is
+      # shadowed by Flutter's from the next step, which is what makes a package
+      # with `sdk: flutter` dependencies resolvable.
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+
+      # Stands in for flutter-actions/setup-flutter, which the official workflow
+      # uses. That action is a composite that pulls in actions/cache@v4, and v4
+      # still declares `runs.using: node20`, which emits a deprecation warning.
+      # subosito/flutter-action is already pinned in ci.yml and runs clean.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Publish - dry run
+        run: dart pub publish --dry-run
+
+      - name: Publish to pub.dev
+        run: dart pub publish -f
