@@ -1,0 +1,97 @@
+name: Bug report
+description: Something in the plugin does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Android API level matters a lot for this plugin —
+        `SmsManager` is reached differently above and below API 31 — so please
+        fill that in accurately.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Call requestPermission()
+        2. Grant the permission
+        3. Call sendSMS(phone: '...', message: '...')
+        4. ...
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: telephony_sms version
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: api-level
+    attributes:
+      label: Android API level
+      description: The API level of the device or emulator, not your compileSdk.
+      placeholder: "30"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Model, or the emulator image if you used one.
+      placeholder: Pixel 7, or Android Emulator API 30 x86_64
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sim
+    attributes:
+      label: SIM setup
+      options:
+        - Single SIM
+        - Dual SIM
+        - Emulator, no SIM
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: flutter-doctor
+    attributes:
+      label: flutter doctor -v
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output from `flutter run` or `adb logcat`. Redact phone numbers and message content.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I declared `SEND_SMS` in my app's `AndroidManifest.xml`.
+          required: true
+        - label: I called `requestPermission()` and it returned `true` before calling `sendSMS()`.
+          required: true
+        - label: My message fits in one SMS part (160 GSM-7 characters, or 70 if it contains Arabic or emoji). Longer messages are truncated by design.
+          required: true
+        - label: I searched existing issues.
+          required: true
