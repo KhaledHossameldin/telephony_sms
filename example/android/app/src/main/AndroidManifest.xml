@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- SEND_SMS implies android.hardware.telephony. Without this, Google Play
+         filters the app off every tablet and Wi-Fi-only device. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <application
         android:label="telephony_sms_example"
         android:name="${applicationName}"

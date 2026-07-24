@@ -9,7 +9,9 @@ import 'telephony_sms_platform_interface.dart';
 class MethodChannelTelephonySMS extends TelephonySMSPlatform {
   /// The method channel used to interact with the native platform.
   @visibleForTesting
-  final methodChannel = const MethodChannel('telephony_sms');
+  final methodChannel = const MethodChannel(
+    'com.khaledhossameldin/telephony_sms',
+  );
 
   @override
   Future<bool> requestPermission() async {
@@ -20,6 +22,8 @@ class MethodChannelTelephonySMS extends TelephonySMSPlatform {
       return granted ?? false;
     } on PlatformException catch (e) {
       throw _asTelephonySmsException(e);
+    } on MissingPluginException {
+      throw _unsupportedPlatform();
     }
   }
 
@@ -39,6 +43,8 @@ class MethodChannelTelephonySMS extends TelephonySMSPlatform {
       });
     } on PlatformException catch (e) {
       throw _asTelephonySmsException(e);
+    } on MissingPluginException {
+      throw _unsupportedPlatform();
     }
   }
 
@@ -46,6 +52,19 @@ class MethodChannelTelephonySMS extends TelephonySMSPlatform {
     return TelephonySmsException(
       TelephonySmsErrorCode.fromCode(e.code),
       e.message ?? 'The platform reported an error without a message.',
+    );
+  }
+
+  /// Raised when no platform implementation answered the channel.
+  ///
+  /// `MissingPluginException` is not a [PlatformException], so without this it
+  /// would escape untyped on every platform but Android and break the promise
+  /// that failures arrive as a [TelephonySmsException].
+  TelephonySmsException _unsupportedPlatform() {
+    return const TelephonySmsException(
+      TelephonySmsErrorCode.unsupportedPlatform,
+      'telephony_sms has no implementation on this platform. It supports '
+      'Android only.',
     );
   }
 }

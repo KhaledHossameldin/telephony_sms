@@ -15,52 +15,57 @@ import kotlin.test.assertTrue
 internal class PendingSendTest {
 
   private companion object {
-    const val OK = PendingSend.RESULT_OK
-    const val NO_SERVICE = PendingSend.RESULT_ERROR_NO_SERVICE
-    const val RADIO_OFF = PendingSend.RESULT_ERROR_RADIO_OFF
+    const val OK = SendResultCodes.RESULT_OK
+    const val NO_SERVICE = SendResultCodes.ERROR_NO_SERVICE
+    const val RADIO_OFF = SendResultCodes.ERROR_RADIO_OFF
   }
 
   @Test
   fun singlePart_success_completesAndSucceeds() {
-    val send = PendingSend("id", partCount = 1)
+    val send = PendingSend(partCount = 1)
 
     assertFalse(send.isComplete)
-    assertTrue(send.recordPart(0, OK))
+    send.recordPart(0, OK)
+
     assertTrue(send.isComplete)
+    assertFalse(send.hasFailed)
     assertTrue(send.outcome.isSuccess)
     assertNull(send.outcome.errorCode)
   }
 
   @Test
   fun singlePart_failure_reportsMappedCode() {
-    val send = PendingSend("id", partCount = 1)
+    val send = PendingSend(partCount = 1)
 
     send.recordPart(0, NO_SERVICE)
 
-    assertTrue(send.isComplete)
+    assertTrue(send.hasFailed)
     assertFalse(send.outcome.isSuccess)
     assertEquals("no_service", send.outcome.errorCode)
     // A single-part message should not be described as "part 1 of 1".
-    assertEquals("The message could not be sent: no service.", send.outcome.message)
+    assertEquals(
+      "The message could not be sent: there is no cellular service.",
+      send.outcome.message,
+    )
   }
 
   @Test
   fun multipart_completesOnlyAfterEveryPartReports() {
-    val send = PendingSend("id", partCount = 3)
+    val send = PendingSend(partCount = 3)
 
-    assertFalse(send.recordPart(0, OK))
+    send.recordPart(0, OK)
     assertFalse(send.isComplete)
-    assertFalse(send.recordPart(1, OK))
+    send.recordPart(1, OK)
     assertFalse(send.isComplete)
 
-    assertTrue(send.recordPart(2, OK))
+    send.recordPart(2, OK)
     assertTrue(send.isComplete)
     assertTrue(send.outcome.isSuccess)
   }
 
   @Test
   fun multipart_outOfOrderReports_stillComplete() {
-    val send = PendingSend("id", partCount = 3)
+    val send = PendingSend(partCount = 3)
 
     send.recordPart(2, OK)
     send.recordPart(0, OK)
@@ -71,9 +76,26 @@ internal class PendingSendTest {
     assertTrue(send.outcome.isSuccess)
   }
 
+  /**
+   * The reason [PendingSend.hasFailed] exists. When a part fails the radio
+   * usually abandons the rest, so their broadcasts never arrive — waiting for
+   * [PendingSend.isComplete] would trade the real cause for a timeout.
+   */
+  @Test
+  fun multipart_failureIsVisibleBeforeTheSendCompletes() {
+    val send = PendingSend(partCount = 3)
+
+    send.recordPart(0, RADIO_OFF)
+
+    assertTrue(send.hasFailed)
+    assertFalse(send.isComplete)
+    assertEquals("radio_off", send.outcome.errorCode)
+    assertEquals("Part 1 of 3 could not be sent: the radio is off.", send.outcome.message)
+  }
+
   @Test
   fun multipart_oneFailingPart_failsWholeSendAndNamesThePart() {
-    val send = PendingSend("id", partCount = 3)
+    val send = PendingSend(partCount = 3)
 
     send.recordPart(0, OK)
     send.recordPart(1, NO_SERVICE)
@@ -82,12 +104,15 @@ internal class PendingSendTest {
     assertTrue(send.isComplete)
     assertFalse(send.outcome.isSuccess)
     assertEquals("no_service", send.outcome.errorCode)
-    assertEquals("Part 2 of 3 could not be sent: no service.", send.outcome.message)
+    assertEquals(
+      "Part 2 of 3 could not be sent: there is no cellular service.",
+      send.outcome.message,
+    )
   }
 
   @Test
   fun multipart_firstFailureWins() {
-    val send = PendingSend("id", partCount = 3)
+    val send = PendingSend(partCount = 3)
 
     send.recordPart(0, RADIO_OFF)
     send.recordPart(1, NO_SERVICE)
@@ -102,55 +127,88 @@ internal class PendingSendTest {
    */
   @Test
   fun duplicatePartReports_areIgnored() {
-    val send = PendingSend("id", partCount = 2)
+    val send = PendingSend(partCount = 2)
 
-    assertFalse(send.recordPart(0, OK))
-    assertFalse(send.recordPart(0, OK))
+    send.recordPart(0, OK)
+    send.recordPart(0, OK)
     assertFalse(send.isComplete)
 
-    assertTrue(send.recordPart(1, OK))
+    send.recordPart(1, OK)
     assertTrue(send.isComplete)
   }
 
   /** A duplicate must not be able to turn a recorded failure into a success. */
   @Test
   fun duplicatePartReport_cannotOverwriteFailure() {
-    val send = PendingSend("id", partCount = 1)
+    val send = PendingSend(partCount = 1)
 
     send.recordPart(0, NO_SERVICE)
     send.recordPart(0, OK)
 
-    assertFalse(send.outcome.isSuccess)
+    assertTrue(send.hasFailed)
     assertEquals("no_service", send.outcome.errorCode)
   }
 
   @Test
   fun outOfRangePartIndex_isIgnored() {
-    val send = PendingSend("id", partCount = 2)
+    val send = PendingSend(partCount = 2)
 
-    assertFalse(send.recordPart(-1, OK))
-    assertFalse(send.recordPart(7, OK))
+    send.recordPart(-1, OK)
+    send.recordPart(7, OK)
+
     assertFalse(send.isComplete)
+    assertFalse(send.hasFailed)
+  }
+
+  /** An out-of-range index must not be able to fail an otherwise fine send. */
+  @Test
+  fun outOfRangeFailure_isIgnored() {
+    val send = PendingSend(partCount = 2)
+
+    send.recordPart(-1, NO_SERVICE)
+
+    assertFalse(send.hasFailed)
   }
 
   @Test
-  fun unknownResultCode_fallsBackToSendFailed() {
-    val send = PendingSend("id", partCount = 1)
+  fun unknownResultCode_namesTheNumber() {
+    val send = PendingSend(partCount = 1)
 
-    send.recordPart(0, 99)
+    send.recordPart(0, 9_999)
 
-    assertEquals("send_failed", send.outcome.errorCode)
-    assertTrue(send.outcome.message!!.contains("99"))
+    assertEquals("generic_failure", send.outcome.errorCode)
+    assertTrue(send.outcome.message!!.contains("9999"))
+  }
+
+  // The delivery half of a send records states read out of a status report PDU
+  // rather than result codes, through the same aggregation.
+
+  @Test
+  fun delivery_succeedsOnlyWhenEveryPartIsDelivered() {
+    val delivery = PendingSend(partCount = 2)
+
+    delivery.recordSuccess(0)
+    assertFalse(delivery.isComplete)
+
+    delivery.recordSuccess(1)
+    assertTrue(delivery.isComplete)
+    assertTrue(delivery.outcome.isSuccess)
   }
 
   @Test
-  fun errorCodeMapping_coversEveryPlatformCode() {
-    assertEquals(
-      "generic_failure",
-      PendingSend.errorCodeFor(PendingSend.RESULT_ERROR_GENERIC_FAILURE),
-    )
-    assertEquals("radio_off", PendingSend.errorCodeFor(PendingSend.RESULT_ERROR_RADIO_OFF))
-    assertEquals("null_pdu", PendingSend.errorCodeFor(PendingSend.RESULT_ERROR_NULL_PDU))
-    assertEquals("no_service", PendingSend.errorCodeFor(PendingSend.RESULT_ERROR_NO_SERVICE))
+  fun delivery_failureIsReportedWithItsOwnWording() {
+    val delivery = PendingSend(partCount = 2)
+
+    delivery.recordFailure(1, "not_delivered", "${delivery.describePart(1)} was not delivered.")
+
+    assertTrue(delivery.hasFailed)
+    assertEquals("not_delivered", delivery.outcome.errorCode)
+    assertEquals("Part 2 of 2 was not delivered.", delivery.outcome.message)
+  }
+
+  @Test
+  fun describePart_namesASinglePartMessageWithoutAnIndex() {
+    assertEquals("The message", PendingSend(partCount = 1).describePart(0))
+    assertEquals("Part 3 of 4", PendingSend(partCount = 4).describePart(2))
   }
 }

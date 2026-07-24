@@ -12,6 +12,14 @@
   success.
 * The minimum supported Android API level is now 24 (was 19), following
   Flutter's own minimum.
+* The minimum Flutter version is now 3.35.0. The Android build targets
+  `compileSdk` 36 with Java 17 and the Kotlin 2.0 Gradle DSL, which is the first
+  stable release whose own defaults meet all three. The previous constraint of
+  `>=3.3.0` let pub resolve the package for projects that could then only fail
+  inside Gradle.
+* The method channel is now `com.khaledhossameldin/telephony_sms` rather than the
+  unqualified `telephony_sms`. This is internal — it only matters if you were
+  mocking the channel by name in tests.
 
 Migration:
 
@@ -48,8 +56,30 @@ try {
   truncated without warning.
 * A `timeout` on `sendSMS()`, defaulting to 30 seconds, so a confirmation that
   never arrives cannot hang the future.
-* Error codes `noService`, `radioOff`, `nullPdu`, `genericFailure`,
-  `sendTimeout`, `notDelivered` and `cancelled`.
+* The full Android result-code table. Android defines around eighty send result
+  codes and only four were mapped, so everything else surfaced as
+  `sendFailed: unknown result code N`. `limitExceeded` matters most — Android
+  caps how many messages an app may send in a window, which is the usual failure
+  when sending in a loop. Also `simAbsent`, `simError`, `noDefaultSmsApp`,
+  `userNotAllowed`, `fdnCheckFailure`, `shortCodeNotAllowed`,
+  `shortCodeNeverAllowed`, `radioNotAvailable`, `networkReject`, `networkError`,
+  `modemError`, `noMemory`, `noResources`, `systemError`, `invalidSmsFormat`,
+  `encodingError`, `invalidSmscAddress`, `operationNotAllowed`,
+  `blockedDuringEmergency` and `cancelled`.
+* `TelephonySmsErrorCode.isTransient`, which says whether retrying the same send
+  could plausibly succeed later, so callers no longer have to hand-roll the list.
+* `permissionNotDeclared`, raised when the host app's manifest is missing
+  `<uses-permission android:name="android.permission.SEND_SMS" />`. The
+  permission can never be granted without it, and every request used to come back
+  as a plain `false`, indistinguishable from the user tapping Deny.
+* `deliveryTimeout`, separate from `sendTimeout`. Both used to be `sendTimeout`,
+  which conflated "never sent, retry" with "sent but unconfirmed, retrying sends
+  it twice".
+* `noTelephony`, for tablets and other Wi-Fi-only devices. They hand out an
+  `SmsManager` and fail only once the message reaches it.
+* `unsupportedPlatform`, for calls on platforms other than Android.
+* `==` and `hashCode` on `TelephonySmsException`, and a `const` constructor on
+  `TelephonySMS`.
 
 ### Fixed
 
@@ -76,6 +106,43 @@ try {
   never removed, leaking and double-registering across configuration changes.
 * The application context is now cleared when the plugin detaches from the
   engine.
+* Delivery confirmation was read from the broadcast's result code, which the
+  framework sets to `RESULT_OK` on every delivery broadcast whatever the carrier
+  reported. The real outcome is in the status report's PDU, so
+  `SmsCompletion.delivered` reported failed deliveries as successes and
+  `notDelivered` was unreachable. The PDU is now parsed and its status
+  classified, including the CDMA encoding, where the value is shifted into the
+  upper bits and a permanent failure has a zero low octet — exactly the shape a
+  GSM reader mistakes for "delivered".
+* A multipart send waited for every part to report before surfacing a failure.
+  When one part fails the radio usually abandons the rest, so their broadcasts
+  never arrive and the caller got `sendTimeout` instead of the real cause. A
+  failure is now reported as soon as any part reports one.
+* Two Flutter engines in one process cross-talked. Send ids and `PendingIntent`
+  request codes were per-instance and both started at zero, while the broadcast
+  actions are per-package, so each engine could resolve the other's future and
+  colliding request codes let `FLAG_UPDATE_CURRENT` rewrite the other's extras.
+  Ids now carry a per-instance token and request codes are process-wide.
+* A permission request in flight when the plugin detached from the engine was
+  left hanging forever. Only activity detach was handled.
+* `onRequestPermissionsResult` matched on the request code alone, so another
+  plugin using the same code resolved this plugin's pending result with its grant
+  array. It now confirms the result is for `SEND_SMS`, and reads the grant by
+  index rather than assuming the first slot. An interrupted request, which comes
+  back with both arrays empty, is treated as a denial rather than hanging.
+* `SecurityException`, `IllegalArgumentException` and `UnsupportedOperationException`
+  from `SmsManager` all collapsed into `sendFailed`. They now map to
+  `permissionDenied` (revoked mid-send), `invalidArguments` (bad destination
+  address) and `noTelephony`.
+* `MissingPluginException` escaped untyped on every platform but Android,
+  breaking the promise that failures arrive as a `TelephonySmsException`.
+* `PendingIntent`s were never released, so every timed-out send leaked one per
+  part.
+* A message needing more than 255 parts is now rejected with `invalidArguments`
+  naming the count, rather than failing opaquely inside the platform.
+* The example app's manifest now marks telephony hardware optional. Without it,
+  `SEND_SMS` makes Google Play hide the app from every tablet and Wi-Fi-only
+  device.
 
 ### Changed
 
@@ -92,7 +159,11 @@ try {
 
 * Only the default SIM subscription is used.
 * Delivery reports are only as reliable as the carrier. `SmsCompletion.delivered`
-  times out on networks that do not emit them, which is many of them.
+  ends in `deliveryTimeout` on networks that do not emit them, which is many of
+  them.
+* A send does not survive the process. Results arrive on a runtime-registered
+  receiver, so a send in flight when Android kills the app is never reported,
+  even though the message may still go out.
 
 ## 0.0.4
 

@@ -8,7 +8,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final platform = MethodChannelTelephonySMS();
-  const channel = MethodChannel('telephony_sms');
+  const channel = MethodChannel('com.khaledhossameldin/telephony_sms');
 
   final log = <MethodCall>[];
 
@@ -17,10 +17,10 @@ void main() {
   void mockHandler({Object? response, PlatformException? error}) {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (methodCall) async {
-      log.add(methodCall);
-      if (error != null) throw error;
-      return response;
-    });
+          log.add(methodCall);
+          if (error != null) throw error;
+          return response;
+        });
   }
 
   setUp(log.clear);
@@ -28,6 +28,10 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  test('the channel name is namespaced to the package', () {
+    expect(platform.methodChannel.name, 'com.khaledhossameldin/telephony_sms');
   });
 
   group('requestPermission', () {
@@ -65,24 +69,41 @@ void main() {
         ),
       );
     });
+
+    // No handler is installed, so the channel has no implementation — which is
+    // what every platform but Android looks like.
+    test('maps a missing implementation onto unsupportedPlatform', () async {
+      await expectLater(
+        platform.requestPermission(),
+        throwsA(
+          isA<TelephonySmsException>().having(
+            (e) => e.code,
+            'code',
+            TelephonySmsErrorCode.unsupportedPlatform,
+          ),
+        ),
+      );
+    });
   });
 
   group('sendSMS', () {
-    test('invokes sendSMS with phone, message, completeOn and timeout',
-        () async {
-      mockHandler();
+    test(
+      'invokes sendSMS with phone, message, completeOn and timeout',
+      () async {
+        mockHandler();
 
-      await platform.sendSMS(phone: '+201000000000', message: 'hello');
+        await platform.sendSMS(phone: '+201000000000', message: 'hello');
 
-      expect(log, hasLength(1));
-      expect(log.single.method, 'sendSMS');
-      expect(log.single.arguments, {
-        'phone': '+201000000000',
-        'message': 'hello',
-        'completeOn': 'sent',
-        'timeoutMillis': 30000,
-      });
-    });
+        expect(log, hasLength(1));
+        expect(log.single.method, 'sendSMS');
+        expect(log.single.arguments, {
+          'phone': '+201000000000',
+          'message': 'hello',
+          'completeOn': 'sent',
+          'timeoutMillis': 30000,
+        });
+      },
+    );
 
     test('sends the delivered completion and a custom timeout', () async {
       mockHandler();
@@ -139,27 +160,34 @@ void main() {
       );
     });
 
-    // These are the codes that only became reachable once the send result was
-    // actually reported back from the radio.
-    for (final entry in const {
-      'no_service': TelephonySmsErrorCode.noService,
-      'radio_off': TelephonySmsErrorCode.radioOff,
-      'null_pdu': TelephonySmsErrorCode.nullPdu,
-      'generic_failure': TelephonySmsErrorCode.genericFailure,
-      'send_timeout': TelephonySmsErrorCode.sendTimeout,
-      'not_delivered': TelephonySmsErrorCode.notDelivered,
-      'cancelled': TelephonySmsErrorCode.cancelled,
-    }.entries) {
-      test('maps ${entry.key} onto ${entry.value.name}', () async {
+    test('maps a missing implementation onto unsupportedPlatform', () async {
+      await expectLater(
+        platform.sendSMS(phone: 'PHONE', message: 'MESSAGE'),
+        throwsA(
+          isA<TelephonySmsException>().having(
+            (e) => e.code,
+            'code',
+            TelephonySmsErrorCode.unsupportedPlatform,
+          ),
+        ),
+      );
+    });
+
+    // Every code the Android side can raise has to survive the trip. A typo on
+    // either side would silently degrade to `unknown`, which reads as a bug in
+    // the caller rather than in the plugin.
+    for (final code in TelephonySmsErrorCode.values) {
+      if (code == TelephonySmsErrorCode.unknown) continue;
+
+      test('maps ${code.code} onto ${code.name}', () async {
         mockHandler(
-          error: PlatformException(code: entry.key, message: 'Failed.'),
+          error: PlatformException(code: code.code, message: 'Failed.'),
         );
 
         await expectLater(
           platform.sendSMS(phone: 'PHONE', message: 'MESSAGE'),
           throwsA(
-            isA<TelephonySmsException>()
-                .having((e) => e.code, 'code', entry.value),
+            isA<TelephonySmsException>().having((e) => e.code, 'code', code),
           ),
         );
       });

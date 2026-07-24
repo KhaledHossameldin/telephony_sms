@@ -76,3 +76,8 @@ jobs:
       - name: Run plugin Kotlin unit tests
         working-directory: example/android
         run: ./gradlew :telephony_sms:testDebugUnitTest
+
+      # example/integration_test/ is deliberately absent from this workflow. It
+      # drives the real SmsManager and needs a handset with a SIM, which no
+      # hosted runner has. Run it with `flutter test integration_test` on a
+      # device before a release.

@@ -22,16 +22,15 @@ internal data class SendOutcome(
  *
  * A long message is split into several parts and each part reports its own
  * result, out of order and possibly more than once. This class collects them and
- * decides when the send as a whole is finished.
+ * decides when the send as a whole is finished. It backs both halves of a send:
+ * the sent broadcasts, which carry a platform result code, and the delivery
+ * reports, whose state has to be read out of a PDU first.
  *
  * Deliberately free of Android types so it can be unit tested without an
  * emulator or Robolectric — the interesting logic lives here, and the plugin
  * keeps only the platform plumbing.
  */
-internal class PendingSend(
-  val id: String,
-  val partCount: Int,
-) {
+internal class PendingSend(val partCount: Int) {
   init {
     require(partCount > 0) { "A send must have at least one part." }
   }
@@ -45,67 +44,60 @@ internal class PendingSend(
   val isComplete: Boolean get() = reported.size >= partCount
 
   /**
-   * Records the platform result code for one part.
+   * True once any part has failed.
    *
-   * Repeat reports for the same part are ignored, so a duplicate broadcast
-   * cannot complete the send early or overwrite an earlier failure. Returns true
-   * when this call completed the send.
+   * Callers should report as soon as this flips rather than waiting for
+   * [isComplete]. When one part fails the radio usually abandons the rest, so
+   * their broadcasts never arrive and waiting only trades the real cause for a
+   * timeout. Nothing a later part can report would change the answer either,
+   * since the first failure is the one kept.
    */
-  fun recordPart(index: Int, resultCode: Int): Boolean {
-    if (index < 0 || index >= partCount) return isComplete
-    if (!reported.add(index)) return isComplete
+  val hasFailed: Boolean get() = failure != null
 
-    if (resultCode != RESULT_OK && failure == null) {
-      failure = SendOutcome(
-        errorCode = errorCodeFor(resultCode),
-        message = failureMessage(index, resultCode),
-      )
-    }
-    return isComplete
-  }
-
-  /** The aggregate outcome. Only meaningful once [isComplete] is true. */
+  /** The aggregate outcome. Meaningful once [hasFailed] or [isComplete]. */
   val outcome: SendOutcome get() = failure ?: SendOutcome.success
 
-  private fun failureMessage(index: Int, resultCode: Int): String {
-    val reason = reasonFor(resultCode)
-    return if (partCount == 1) {
-      "The message could not be sent: $reason."
-    } else {
-      "Part ${index + 1} of $partCount could not be sent: $reason."
+  /**
+   * Records a platform result code for one part of a sent broadcast.
+   *
+   * Repeat reports for the same part are ignored, so a duplicate broadcast
+   * cannot complete the send early or overwrite an earlier failure.
+   */
+  fun recordPart(index: Int, resultCode: Int) {
+    if (resultCode == SendResultCodes.RESULT_OK) {
+      recordSuccess(index)
+      return
     }
+
+    val platformFailure = SendResultCodes.failureFor(resultCode)
+    recordFailure(
+      index,
+      platformFailure.code,
+      "${describePart(index)} could not be sent: ${platformFailure.reason}.",
+    )
   }
 
-  internal companion object {
-    /** `android.app.Activity.RESULT_OK`, inlined to keep this class Android-free. */
-    const val RESULT_OK = -1
+  /** Records one part as having succeeded. */
+  fun recordSuccess(index: Int) {
+    claim(index)
+  }
 
-    /** `SmsManager.RESULT_ERROR_GENERIC_FAILURE` */
-    const val RESULT_ERROR_GENERIC_FAILURE = 1
+  /** Records one part as having failed, with the [message] shown to the caller. */
+  fun recordFailure(index: Int, errorCode: String, message: String) {
+    if (!claim(index)) return
+    if (failure == null) failure = SendOutcome(errorCode, message)
+  }
 
-    /** `SmsManager.RESULT_ERROR_RADIO_OFF` */
-    const val RESULT_ERROR_RADIO_OFF = 2
+  /**
+   * How to refer to one part in a message to the caller. A single-part message
+   * should not be described as "part 1 of 1".
+   */
+  fun describePart(index: Int): String =
+    if (partCount == 1) "The message" else "Part ${index + 1} of $partCount"
 
-    /** `SmsManager.RESULT_ERROR_NULL_PDU` */
-    const val RESULT_ERROR_NULL_PDU = 3
-
-    /** `SmsManager.RESULT_ERROR_NO_SERVICE` */
-    const val RESULT_ERROR_NO_SERVICE = 4
-
-    fun errorCodeFor(resultCode: Int): String = when (resultCode) {
-      RESULT_ERROR_GENERIC_FAILURE -> "generic_failure"
-      RESULT_ERROR_RADIO_OFF -> "radio_off"
-      RESULT_ERROR_NULL_PDU -> "null_pdu"
-      RESULT_ERROR_NO_SERVICE -> "no_service"
-      else -> "send_failed"
-    }
-
-    fun reasonFor(resultCode: Int): String = when (resultCode) {
-      RESULT_ERROR_GENERIC_FAILURE -> "generic failure"
-      RESULT_ERROR_RADIO_OFF -> "the radio is off"
-      RESULT_ERROR_NULL_PDU -> "null PDU"
-      RESULT_ERROR_NO_SERVICE -> "no service"
-      else -> "unknown result code $resultCode"
-    }
+  /** Takes the slot for [index], returning false if it is out of range or taken. */
+  private fun claim(index: Int): Boolean {
+    if (index < 0 || index >= partCount) return false
+    return reported.add(index)
   }
 }

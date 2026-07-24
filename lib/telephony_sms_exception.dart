@@ -1,12 +1,30 @@
 /// The reason a [TelephonySmsException] was thrown.
 ///
-/// Each value maps to an error code raised by the Android side of the plugin.
+/// Values fall into three groups: failures raised by the plugin before the
+/// message reached the radio, failures the radio itself reported, and the state
+/// of the send afterwards.
+///
+/// Android defines around eighty distinct send result codes. They are grouped
+/// here by what a caller can do about them rather than kept one-to-one, so
+/// several platform codes can produce the same value.
 enum TelephonySmsErrorCode {
-  /// `phone` or `message` was null, empty, or blank.
+  // Raised by the plugin, before anything reached the radio.
+
+  /// `phone` or `message` was null, empty, blank, or rejected by the platform.
+  ///
+  /// Also raised when the message is too long to fit in one multipart message.
   invalidArguments('invalid_arguments'),
 
   /// `SEND_SMS` has not been granted. Call `requestPermission()` first.
   permissionDenied('permission_denied'),
+
+  /// The host app's manifest does not declare `SEND_SMS`.
+  ///
+  /// The permission can never be granted until it does, so the dialog never
+  /// appears and every request comes straight back denied. Add
+  /// `<uses-permission android:name="android.permission.SEND_SMS" />` to
+  /// `android/app/src/main/AndroidManifest.xml`.
+  permissionNotDeclared('permission_not_declared'),
 
   /// No activity was attached, so the permission dialog could not be shown.
   noActivity('no_activity'),
@@ -20,11 +38,22 @@ enum TelephonySmsErrorCode {
   /// The device does not provide an `SmsManager`.
   smsManagerUnavailable('sms_manager_unavailable'),
 
+  /// The device cannot send SMS at all — a tablet or other Wi-Fi-only device.
+  noTelephony('no_telephony'),
+
   /// `SmsManager` rejected the message before it reached the radio.
   sendFailed('send_failed'),
 
   /// The plugin is not attached to a Flutter engine.
   noContext('no_context'),
+
+  /// This platform has no implementation of the plugin.
+  ///
+  /// `telephony_sms` is Android only: iOS does not permit sending SMS without
+  /// user interaction, and there is no equivalent of `SmsManager`.
+  unsupportedPlatform('unsupported_platform'),
+
+  // Reported by the radio.
 
   /// The device has no cellular service. Safe to retry once service returns.
   noService('no_service'),
@@ -32,23 +61,99 @@ enum TelephonySmsErrorCode {
   /// The radio is off — airplane mode, most likely. Safe to retry once it is on.
   radioOff('radio_off'),
 
+  /// The radio is not available. Usually transient.
+  radioNotAvailable('radio_not_available'),
+
   /// The telephony stack produced a null PDU. Not retryable as-is.
   nullPdu('null_pdu'),
 
   /// The radio reported an unspecified failure. Often transient.
   genericFailure('generic_failure'),
 
-  /// No confirmation arrived before the timeout.
+  /// The device's SMS rate limit was reached.
   ///
-  /// When waiting on delivery this usually means the message *was* sent and the
-  /// carrier simply does not emit delivery reports.
+  /// Android throttles how many messages an app may send in a window, so this is
+  /// the usual failure when sending in a loop. Back off and retry rather than
+  /// retrying immediately.
+  limitExceeded('limit_exceeded'),
+
+  /// The number is not in the SIM's fixed dialling list.
+  fdnCheckFailure('fdn_check_failure'),
+
+  /// Sending to this short code was not permitted, typically a premium number
+  /// the user declined to pay for.
+  shortCodeNotAllowed('short_code_not_allowed'),
+
+  /// Sending to this short code is never permitted.
+  shortCodeNeverAllowed('short_code_never_allowed'),
+
+  /// The network rejected the message.
+  networkReject('network_reject'),
+
+  /// The network could not carry the message. Usually transient.
+  networkError('network_error'),
+
+  /// The modem reported an error. Often transient.
+  modemError('modem_error'),
+
+  /// The device is out of memory.
+  noMemory('no_memory'),
+
+  /// The telephony stack is out of resources.
+  noResources('no_resources'),
+
+  /// The telephony system reported an internal error.
+  systemError('system_error'),
+
+  /// The message format is invalid.
+  invalidSmsFormat('invalid_sms_format'),
+
+  /// The message could not be encoded for the network.
+  encodingError('encoding_error'),
+
+  /// The SMS centre address is invalid.
+  invalidSmscAddress('invalid_smsc_address'),
+
+  /// The operation is not allowed on this device.
+  operationNotAllowed('operation_not_allowed'),
+
+  /// Sending is blocked while an emergency call is in progress.
+  blockedDuringEmergency('blocked_during_emergency'),
+
+  /// The device has no default SMS app.
+  noDefaultSmsApp('no_default_sms_app'),
+
+  /// This user profile is not allowed to send SMS.
+  userNotAllowed('user_not_allowed'),
+
+  /// There is no SIM.
+  simAbsent('sim_absent'),
+
+  /// The SIM could not be used — locked, busy, full, or in an invalid state.
+  simError('sim_error'),
+
+  /// The send was cancelled by the platform.
+  cancelled('cancelled'),
+
+  // The state of the send afterwards.
+
+  /// No send confirmation arrived before the timeout.
+  ///
+  /// The message most likely never left the device, but that is not certain — a
+  /// confirmation can be lost. Retrying can therefore send it twice.
   sendTimeout('send_timeout'),
+
+  /// The message was sent, but no delivery report arrived before the timeout.
+  ///
+  /// This is the common outcome of `SmsCompletion.delivered`: many carriers
+  /// never emit delivery reports. **Do not retry** — the message went out.
+  deliveryTimeout('delivery_timeout'),
 
   /// The message was sent, but the carrier reported it as not delivered.
   notDelivered('not_delivered'),
 
-  /// The plugin detached from the engine while the send was in flight.
-  cancelled('cancelled'),
+  /// The plugin detached from the engine while the call was in flight.
+  detached('detached'),
 
   /// The platform reported a code this version of the plugin does not know.
   unknown('unknown');
@@ -57,6 +162,32 @@ enum TelephonySmsErrorCode {
 
   /// The raw string used on the method channel.
   final String code;
+
+  /// Whether retrying the same send could plausibly succeed later.
+  ///
+  /// Covers conditions that change on their own — no service, a radio that is
+  /// off, a busy network, a rate limit. It does not cover anything the user or
+  /// the app has to fix first, such as a denied permission or a barred number.
+  ///
+  /// [sendTimeout] is included because the message most likely never went out,
+  /// but a lost confirmation is possible, so a retry can duplicate it. Guard
+  /// against that if duplicates matter. [deliveryTimeout] is deliberately not
+  /// included: the message was confirmed sent.
+  bool get isTransient => switch (this) {
+    noService ||
+    radioOff ||
+    radioNotAvailable ||
+    genericFailure ||
+    limitExceeded ||
+    networkReject ||
+    networkError ||
+    modemError ||
+    noMemory ||
+    noResources ||
+    systemError ||
+    sendTimeout => true,
+    _ => false,
+  };
 
   /// Maps a platform error code onto its enum value, falling back to [unknown].
   static TelephonySmsErrorCode fromCode(String? code) {
@@ -77,6 +208,16 @@ class TelephonySmsException implements Exception {
 
   /// A human-readable description of the failure.
   final String message;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TelephonySmsException &&
+          other.code == code &&
+          other.message == message;
+
+  @override
+  int get hashCode => Object.hash(code, message);
 
   @override
   String toString() => 'TelephonySmsException(${code.code}): $message';

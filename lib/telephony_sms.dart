@@ -6,6 +6,9 @@ export 'telephony_sms_exception.dart';
 
 /// Sends SMS messages in the background on Android.
 class TelephonySMS {
+  /// Creates a facade over the current platform implementation.
+  const TelephonySMS();
+
   /// Requests the `SEND_SMS` runtime permission.
   ///
   /// Returns `true` if the permission is granted, `false` if the user denied it.
@@ -27,9 +30,8 @@ class TelephonySMS {
   /// try {
   ///   await telephonySMS.sendSMS(phone: phone, message: message);
   /// } on TelephonySmsException catch (e) {
-  ///   if (e.code == TelephonySmsErrorCode.noService ||
-  ///       e.code == TelephonySmsErrorCode.radioOff) {
-  ///     // Transient — worth retrying later.
+  ///   if (e.code.isTransient) {
+  ///     // No service, radio off, rate limited — worth retrying later.
   ///   }
   /// }
   /// ```
