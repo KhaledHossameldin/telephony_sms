@@ -17,6 +17,18 @@ updates:
     labels:
       - dependencies
 
+  # Both Gradle directories are watched. The plugin's own build script pins AGP
+  # and Kotlin independently of the example's, so covering only the example lets
+  # the two drift apart.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - android
+
   - package-ecosystem: gradle
     directory: /example/android
     schedule:

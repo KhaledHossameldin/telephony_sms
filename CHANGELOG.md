@@ -55,7 +55,7 @@ try {
 
 ### Changed
 
-* Android toolchain modernized: AGP 9.0.1, Kotlin 2.3.20, Gradle 9.1.0, Java 17,
+* Android toolchain modernized: AGP 9.3.1, Kotlin 2.4.10, Gradle 9.6.1, Java 17,
   `compileSdk` 36, `minSdk` 24. Gradle build scripts migrated to Kotlin DSL.
 * `plugin_platform_interface` raised to ^2.1.8 and `flutter_lints` to ^6.0.0.
 * Unit tests replaced. The previous Kotlin test asserted a `getPlatformVersion`
