@@ -1,10 +1,13 @@
 name: CI
 
 on:
+  # Only main is long-lived, so only main is watched on push. Everything else
+  # reaches main through a pull request, and the pull_request trigger is left
+  # unfiltered so any topic branch is checked. Listing a branch under both
+  # triggers would run the whole suite twice for one commit.
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
-    branches: [main, dev]
 
 # Cancel superseded runs on the same ref.
 concurrency:
