@@ -1,21 +1,36 @@
 version: 2
 
+# Every ecosystem groups all of its updates into a single pull request and is
+# checked monthly. Ungrouped weekly checks across five ecosystems produced six
+# pull requests in one cycle, each with its own notification and CI run.
+#
+# Security advisories are unaffected by either setting: Dependabot raises those
+# immediately and outside the group.
+
 updates:
   - package-ecosystem: pub
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     labels:
       - dependencies
+    groups:
+      package-dart:
+        patterns:
+          - "*"
 
   - package-ecosystem: pub
     directory: /example
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     labels:
       - dependencies
+    groups:
+      example-dart:
+        patterns:
+          - "*"
 
   # Both Gradle directories are watched. The plugin's own build script pins AGP
   # and Kotlin independently of the example's, so covering only the example lets
@@ -23,25 +38,45 @@ updates:
   - package-ecosystem: gradle
     directory: /android
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     labels:
       - dependencies
       - android
+    groups:
+      plugin-android:
+        patterns:
+          - "*"
+    ignore:
+      # androidx.core 1.19.0 raises minCompileSdk to 37. Flutter's default
+      # compileSdk is 36 and the example app inherits it, so 1.19.0 fails
+      # :app:checkDebugAarMetadata and cannot be adopted here. The plugin needs
+      # nothing newer than 1.9.0 in any case. Revisit when Flutter moves to 37.
+      - dependency-name: "androidx.core:core"
+        versions: [">=1.19.0"]
 
   - package-ecosystem: gradle
     directory: /example/android
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     labels:
       - dependencies
       - android
+    groups:
+      example-android:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 3
     labels:
       - dependencies
       - ci
+    groups:
+      actions:
+        patterns:
+          - "*"

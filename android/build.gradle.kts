@@ -76,7 +76,12 @@ dependencies {
     // ContextCompat.registerReceiver. It previously arrived only transitively
     // through the Flutter embedding; registerReceiver with the exported flag
     // needs 1.9.0 or newer, so the floor is declared rather than assumed.
-    implementation("androidx.core:core:1.13.1")
+    //
+    // Held at 1.18.0 on purpose: its AAR declares minCompileSdk=36, and 1.19.0
+    // raises that to 37. Nothing in this plugin needs anything past 1.9.0, so
+    // there is no reason to move until Flutter's default compileSdk does.
+    // dependabot is configured to stop proposing 1.19.0 and above.
+    implementation("androidx.core:core:1.18.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.23.0")
