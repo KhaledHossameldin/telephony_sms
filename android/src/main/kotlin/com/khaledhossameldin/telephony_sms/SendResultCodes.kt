@@ -182,7 +182,12 @@ internal object SendResultCodes {
       SendFailure("blocked_during_emergency", "sending is blocked during an emergency call")
 
     NO_DEFAULT_SMS_APP ->
-      SendFailure("no_default_sms_app", "the device has no default SMS app")
+      // Despite the constant's name, on a modern multi-SIM device this is
+      // usually an unset default SMS SIM rather than a missing SMS app.
+      SendFailure(
+        "no_default_sms_app",
+        "no SMS subscription could be resolved — set a default SMS SIM in Settings",
+      )
 
     USER_NOT_ALLOWED ->
       SendFailure("user_not_allowed", "this user profile is not allowed to send SMS")

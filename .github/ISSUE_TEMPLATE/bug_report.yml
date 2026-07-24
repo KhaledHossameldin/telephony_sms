@@ -67,6 +67,19 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: default-sms-sim
+    attributes:
+      label: Default SMS SIM
+      description: On a dual-SIM device, is a default SMS subscription set under Settings → Network & internet → SIMs → SMS?
+      options:
+        - A default SMS SIM is set
+        - "Set to Ask every time / no default"
+        - Single SIM, not applicable
+        - Not sure
+    validations:
+      required: true
+
   - type: textarea
     id: flutter-doctor
     attributes:
@@ -91,7 +104,7 @@ body:
           required: true
         - label: I called `requestPermission()` and it returned `true` before calling `sendSMS()`.
           required: true
-        - label: My message fits in one SMS part (160 GSM-7 characters, or 70 if it contains Arabic or emoji). Longer messages are truncated by design.
-          required: true
+        - label: I noted whether the message needed more than one SMS part (over 160 GSM-7 characters, or 70 with Arabic or emoji), since multipart takes a different code path.
+          required: false
         - label: I searched existing issues.
           required: true

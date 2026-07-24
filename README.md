@@ -139,6 +139,8 @@ Raised before anything reaches the radio:
 | `alreadyRequesting`      | A permission request is already in flight                        |
 | `smsManagerUnavailable`  | The device provides no `SmsManager`                              |
 | `noTelephony`            | The device cannot send SMS — a tablet or Wi-Fi-only device        |
+| `noSmsSubscription`      | No default SMS SIM is set on a multi-SIM device (see Limitations)  |
+| `receiverUnavailable`    | The plugin could not register its result receiver (see Limitations) |
 | `sendFailed`             | The message was rejected before reaching the radio               |
 | `noContext`              | The plugin is not attached to a Flutter engine                   |
 | `unsupportedPlatform`    | Not Android                                                      |
@@ -167,7 +169,7 @@ Reported by the radio. The **Retry** column is what `isTransient` returns:
 | `invalidSmscAddress`       | The SMS centre address is invalid                      | no    |
 | `operationNotAllowed`      | Not allowed on this device                             | no    |
 | `blockedDuringEmergency`   | Blocked while an emergency call is in progress         | no    |
-| `noDefaultSmsApp`          | The device has no default SMS app                      | no    |
+| `noDefaultSmsApp`          | No SMS subscription could be resolved — usually an unset SMS SIM | no |
 | `userNotAllowed`           | This user profile may not send SMS                     | no    |
 | `simAbsent`                | There is no SIM                                        | no    |
 | `simError`                 | The SIM is locked, busy, full, or in an invalid state  | no    |
@@ -177,15 +179,16 @@ The state of the send afterwards:
 
 | Code               | Meaning                                                       | Retry |
 | ------------------ | ------------------------------------------------------------- | ----- |
-| `sendTimeout`      | No send confirmation arrived before `timeout`                 | yes, but see below |
+| `sendTimeout`      | Outcome unknown — no confirmation arrived before `timeout`     | **no**, see below |
 | `deliveryTimeout`  | Sent, but no delivery report arrived before `timeout`         | **no** |
 | `notDelivered`     | Sent, but the carrier reported it as not delivered            | no    |
 | `detached`         | The plugin detached while the call was in flight              | —     |
 | `unknown`          | An error code this version of the plugin does not recognise   | no    |
 
-`sendTimeout` means the message most likely never left the device — but a lost
-confirmation is possible, so a retry can duplicate it. Guard against that if
-duplicates matter.
+`sendTimeout` means the plugin **could not tell** whether the message went out —
+it may have. It is deliberately not retryable: an automatic retry would duplicate
+the message whenever it did send. Decide per message whether a possible duplicate
+is acceptable before retrying by hand.
 
 Note that a denied permission is **not** an exception — `requestPermission()`
 returns `false`. Exceptions are reserved for calls that could not be made.
@@ -196,17 +199,31 @@ returns `false`. Exceptions are reserved for calls that could not be made.
 Play must qualify for an eligible use case and submit a permissions declaration,
 or they will be rejected. Check that your app qualifies before shipping.
 
+It is also *hard restricted*: on a build installed from Play without an approved
+declaration, the permission is not grantable at all. The symptom is
+`requestPermission()` returning `false` with **no dialog ever appearing** — which
+looks exactly like a user denial but is not one. If you see that on a Play build,
+the declaration, not the user, is the problem.
+
 [play-sms]: https://support.google.com/googleplay/android-developer/answer/10208820
 
 ## Limitations
 
-* **Default SIM only.** There is no way to choose a subscription on dual-SIM
-  devices.
+* **A default SMS SIM must be set on dual-SIM devices.** The plugin sends on the
+  default SMS subscription. If none is set — SMS left on "Ask every time" — it
+  fails fast with `noSmsSubscription` rather than sending, because the platform
+  would otherwise pop a system SIM-chooser dialog in the foreground, or fail
+  silently in the background. There is no API to pick a specific SIM per send.
 * **Delivery reports depend on the carrier.** `SmsCompletion.delivered` can only
   report what the network tells it, and many networks tell it nothing.
 * **A send does not survive the process.** Results arrive on a runtime-registered
   receiver, so if Android kills the app mid-send the outcome is never reported.
   The message may still go out.
+* **The result receiver depends on androidx.core ≥ 1.9.0.** It normally arrives
+  transitively and is declared explicitly, but if your build forces an older
+  androidx.core, or its merged manifest strips the signature permission
+  androidx.core contributes, the plugin cannot confirm sends and refuses them with
+  `receiverUnavailable` rather than sending blind.
 
 ## Example
 
