@@ -178,7 +178,6 @@ void main() {
         TelephonySmsErrorCode.noMemory,
         TelephonySmsErrorCode.noResources,
         TelephonySmsErrorCode.systemError,
-        TelephonySmsErrorCode.sendTimeout,
       ];
 
       for (final code in TelephonySmsErrorCode.values) {
@@ -190,8 +189,10 @@ void main() {
       }
     });
 
-    // Retrying these sends the message a second time.
-    test('excludes outcomes where the message already went out', () {
+    // The key change: an unknown outcome must not auto-retry, because a retry
+    // duplicates the message on every case where it actually went out.
+    test('excludes the timeouts, where a retry risks a paid duplicate', () {
+      expect(TelephonySmsErrorCode.sendTimeout.isTransient, isFalse);
       expect(TelephonySmsErrorCode.deliveryTimeout.isTransient, isFalse);
       expect(TelephonySmsErrorCode.notDelivered.isTransient, isFalse);
     });
@@ -199,6 +200,8 @@ void main() {
     test('excludes anything the user or the app has to fix first', () {
       expect(TelephonySmsErrorCode.permissionDenied.isTransient, isFalse);
       expect(TelephonySmsErrorCode.permissionNotDeclared.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.noSmsSubscription.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.receiverUnavailable.isTransient, isFalse);
       expect(TelephonySmsErrorCode.fdnCheckFailure.isTransient, isFalse);
       expect(TelephonySmsErrorCode.shortCodeNeverAllowed.isTransient, isFalse);
       expect(TelephonySmsErrorCode.unsupportedPlatform.isTransient, isFalse);

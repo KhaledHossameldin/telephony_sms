@@ -14,6 +14,11 @@ class TelephonySMS {
   /// Returns `true` if the permission is granted, `false` if the user denied it.
   /// Resolves immediately with `true` when the permission was already granted.
   ///
+  /// A `false` is not always a user denial. `SEND_SMS` is *hard restricted*, so on
+  /// a build installed from Google Play without an approved permissions
+  /// declaration it is not grantable and this returns `false` with no dialog ever
+  /// shown. See the README's Google Play section.
+  ///
   /// Throws a [TelephonySmsException] if the request could not be made at all —
   /// for example when no activity is attached.
   Future<bool> requestPermission() {

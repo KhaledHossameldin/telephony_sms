@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.telephony.SmsManager
 import android.telephony.SmsMessage
+import android.telephony.SubscriptionManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -65,6 +66,18 @@ class TelephonySmsPlugin :
   private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
   private var receiver: BroadcastReceiver? = null
+
+  /**
+   * Why the result receiver could not be registered, or null if it registered.
+   *
+   * Registration can fail permanently — a merged manifest missing the signature
+   * permission androidx.core needs below API 33, or androidx.core forced below
+   * 1.9.0. When it does, no send can ever be confirmed, so sending is refused
+   * rather than done blind. The failure is recorded rather than thrown, because
+   * throwing from [onAttachedToEngine] leaves the plugin half-registered: the
+   * method channel is already live, but the plugin never becomes activity-aware.
+   */
+  private var receiverFailure: String? = null
 
   /** A send in flight, plus the bookkeeping needed to finish or abandon it. */
   private class InFlightSend(
@@ -121,7 +134,6 @@ class TelephonySmsPlugin :
         onSendBroadcast(intent.action, intent, resultCode)
       }
     }
-    this.receiver = receiver
 
     val filter = IntentFilter().apply {
       addAction(sentAction(context))
@@ -130,12 +142,25 @@ class TelephonySmsPlugin :
     // The flag is mandatory for apps targeting API 34+. These broadcasts come
     // from the telephony stack via our own PendingIntent, so they are not
     // exported.
-    ContextCompat.registerReceiver(
-      context,
-      receiver,
-      filter,
-      ContextCompat.RECEIVER_NOT_EXPORTED,
-    )
+    //
+    // Catch Throwable, not Exception: below API 33 ContextCompat throws a
+    // RuntimeException when the app's manifest lacks the signature permission it
+    // relies on, and an androidx.core resolved below 1.9.0 raises NoSuchMethodError,
+    // which is an Error. Either way, record it and refuse to send rather than crash
+    // the attach and leave the plugin half-registered.
+    runCatching {
+      ContextCompat.registerReceiver(
+        context,
+        receiver,
+        filter,
+        ContextCompat.RECEIVER_NOT_EXPORTED,
+      )
+    }.onSuccess {
+      this.receiver = receiver
+      receiverFailure = null
+    }.onFailure {
+      receiverFailure = "${it.javaClass.simpleName}: ${it.message}"
+    }
   }
 
   private fun unregisterReceiver(context: Context) {
@@ -272,14 +297,23 @@ class TelephonySmsPlugin :
       return
     }
 
-    // Tablets and other Wi-Fi-only devices still hand out an SmsManager, and
-    // only fail once the message reaches it.
-    if (!hasTelephonyMessaging(context)) {
-      result.error(ERROR_NO_TELEPHONY, "This device cannot send SMS messages.", null)
+    // Refuse, before anything reaches the radio, any condition that would leave
+    // the plugin unable to say whether the message went out — a dead receiver, a
+    // device that cannot send, or an unset SMS subscription. Each of those
+    // otherwise ends in an unconfirmable send the caller is told to retry, and a
+    // message the user pays for twice.
+    val subId = SubscriptionManager.getDefaultSmsSubscriptionId()
+    val block = SendPreconditions.blockFor(
+      receiverFailure = receiverFailure,
+      hasTelephony = hasTelephonyMessaging(context),
+      hasSmsSubscription = isUsableSubscription(subId),
+    )
+    if (block != null) {
+      result.error(block.code, block.message, null)
       return
     }
 
-    val smsManager = resolveSmsManager(context)
+    val smsManager = resolveSmsManager(context, subId)
     if (smsManager == null) {
       result.error(
         ERROR_SMS_MANAGER_UNAVAILABLE,
@@ -476,8 +510,14 @@ class TelephonySmsPlugin :
 
   private fun onSendTimedOut(id: String) {
     val send = pendingSends[id] ?: return
+    // A timeout means the message may still be in flight, so the result intents
+    // are left live rather than cancelled. Cancelling one makes the telephony
+    // stack throw CanceledException when it finally reports; leaving it live lets
+    // it fire harmlessly into a receiver that no longer knows the id. The Dart
+    // future is already resolved here, so a late report cannot be re-reported —
+    // it is only spared from becoming an exception in the phone process.
     if (send.awaitDelivery && send.sentConfirmed) {
-      finish(id) {
+      finish(id, cancelIntents = false) {
         it.error(
           ERROR_DELIVERY_TIMEOUT,
           "The message was sent, but no delivery report arrived before the timeout. Many " +
@@ -486,8 +526,13 @@ class TelephonySmsPlugin :
         )
       }
     } else {
-      finish(id) {
-        it.error(ERROR_SEND_TIMEOUT, "No send confirmation arrived before the timeout.", null)
+      finish(id, cancelIntents = false) {
+        it.error(
+          ERROR_SEND_TIMEOUT,
+          "No send confirmation arrived before the timeout. The message may or may not have " +
+            "been sent; the plugin could not tell.",
+          null,
+        )
       }
     }
   }
@@ -497,13 +542,18 @@ class TelephonySmsPlugin :
     finish(id) { it.error(errorCode, message, null) }
   }
 
-  /** Resolves a send exactly once, clearing its timeout and releasing its intents. */
-  private fun finish(id: String, reply: (Result) -> Unit) {
+  /**
+   * Resolves a send exactly once and clears its timeout.
+   *
+   * [cancelIntents] releases the result PendingIntents, which is right when the
+   * send has truly resolved and they are spent, but wrong on a timeout: the
+   * message may still be in flight, and a cancelled intent turns the eventual
+   * report into a CanceledException in the telephony process.
+   */
+  private fun finish(id: String, cancelIntents: Boolean = true, reply: (Result) -> Unit) {
     val send = pendingSends.remove(id) ?: return
     mainHandler.removeCallbacks(send.timeoutRunnable)
-    // Nothing will fire these now, and the system holds them until something
-    // does.
-    send.intents.forEach { it.cancel() }
+    if (cancelIntents) send.intents.forEach { it.cancel() }
     reply(send.result)
   }
 
@@ -565,31 +615,56 @@ class TelephonySmsPlugin :
     info.requestedPermissions?.contains(Manifest.permission.SEND_SMS) == true
   }.getOrDefault(true)
 
+  /**
+   * Whether the device can send SMS.
+   *
+   * `FEATURE_TELEPHONY_MESSAGING` was split out of `FEATURE_TELEPHONY` at API 31,
+   * so either is enough on its own: a device that declares only the parent feature
+   * — as this plugin's own setup docs and example manifest tell host apps to — can
+   * still send. Requiring only the sub-feature would reject that device on hardware
+   * that works.
+   */
   private fun hasTelephonyMessaging(context: Context): Boolean {
     val packageManager = context.packageManager
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    @Suppress("DEPRECATION")
+    val hasTelephony = packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+    val hasMessaging = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
       packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)
-    } else {
-      @Suppress("DEPRECATION")
-      packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
-    }
+    return hasTelephony || hasMessaging
   }
 
   /**
-   * Resolved on every send rather than cached, so the manager can never go stale
-   * against the current permission state.
+   * Whether [subId] names a real subscription rather than the invalid sentinel.
+   *
+   * `SmsManager.getDefaultSmsSubscriptionId` returns `INVALID_SUBSCRIPTION_ID` on
+   * a device with no default SMS subscription. `SubscriptionManager.isValidSubscriptionId`
+   * would express this, but it is API 29 and this plugin supports API 24, so its
+   * one-line definition — `subId > INVALID_SUBSCRIPTION_ID` — is inlined. The
+   * constant is a compile-time `-1`, safe on every level.
+   */
+  private fun isUsableSubscription(subId: Int): Boolean =
+    subId > SubscriptionManager.INVALID_SUBSCRIPTION_ID
+
+  /**
+   * The [SmsManager] bound to [subId], never the default-subscription one.
+   *
+   * Binding to an explicit subscription is what keeps the framework from ever
+   * showing its SIM-disambiguation dialog: on a multi-SIM device with no default
+   * SMS subscription, [SmsManager.getDefault] blocks on a system SIM picker in the
+   * foreground and fails outright in the background. [subId] is already validated
+   * by [SendPreconditions] before this is called.
    *
    * [SmsManager] only became reachable through `getSystemService` in API 31; on
    * anything older that call returns `null` instead of throwing, so the version
-   * check has to gate on [Build.VERSION_CODES.S] rather than on the API level
-   * that introduced runtime permissions.
+   * check has to gate on [Build.VERSION_CODES.S] rather than on the API level that
+   * introduced runtime permissions.
    */
-  private fun resolveSmsManager(context: Context): SmsManager? =
+  private fun resolveSmsManager(context: Context, subId: Int): SmsManager? =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      context.getSystemService(SmsManager::class.java)
+      context.getSystemService(SmsManager::class.java)?.createForSubscriptionId(subId)
     } else {
       @Suppress("DEPRECATION")
-      SmsManager.getDefault()
+      SmsManager.getSmsManagerForSubscriptionId(subId)
     }
 
   /** Namespaced per app so two apps using this plugin cannot cross-talk. */

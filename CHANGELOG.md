@@ -77,6 +77,10 @@ try {
   it twice".
 * `noTelephony`, for tablets and other Wi-Fi-only devices. They hand out an
   `SmsManager` and fail only once the message reaches it.
+* `noSmsSubscription`, raised up front on a multi-SIM device with no default SMS
+  subscription. See the security fixes below for why.
+* `receiverUnavailable`, raised when the plugin cannot register its result
+  receiver. See the security fixes below.
 * `unsupportedPlatform`, for calls on platforms other than Android.
 * `==` and `hashCode` on `TelephonySmsException`, and a `const` constructor on
   `TelephonySMS`.
@@ -136,13 +140,44 @@ try {
   address) and `noTelephony`.
 * `MissingPluginException` escaped untyped on every platform but Android,
   breaking the promise that failures arrive as a `TelephonySmsException`.
-* `PendingIntent`s were never released, so every timed-out send leaked one per
-  part.
 * A message needing more than 255 parts is now rejected with `invalidArguments`
   naming the count, rather than failing opaquely inside the platform.
 * The example app's manifest now marks telephony hardware optional. Without it,
   `SEND_SMS` makes Google Play hide the app from every tablet and Wi-Fi-only
   device.
+
+### Security
+
+A dedicated audit found no exploitable vulnerability, but three paths to the same
+costly outcome — the plugin losing track of a send, reporting a retryable
+`sendTimeout`, and the caller resending a message that had in fact gone out, at the
+user's expense. `SECURITY.md` classes "sent more than once per call" as a security
+issue, so these are called out separately.
+
+* Sends are now bound to an explicit SMS subscription with `createForSubscriptionId`
+  rather than the default-subscription `SmsManager`. On a multi-SIM device with no
+  default SMS subscription, the default manager pops a system SIM-picker in the
+  foreground and fails silently in the background — AOSP explicitly warns against
+  using it off the main path. Both cases previously ended in `sendTimeout` while
+  the message was still queued, so a retry duplicated it. The plugin now refuses
+  such a send up front with `noSmsSubscription`.
+* `sendTimeout` is no longer `isTransient`. It means the outcome is *unknown*, and
+  an automatic retry duplicates the message whenever it did send. The timeout path
+  also no longer cancels the sent `PendingIntent`, which had made a late radio
+  report surface as a `CanceledException` instead of firing harmlessly.
+* A failed result-receiver registration no longer leaves the plugin half-alive.
+  Below API 33 `ContextCompat.registerReceiver` throws when the app's merged
+  manifest lacks the signature permission androidx.core contributes, and a forced
+  androidx.core below 1.9.0 throws `NoSuchMethodError`; either was swallowed by the
+  plugin registrant, leaving the channel live but no receiver and no activity
+  binding, so every send timed out. Registration failure is now caught and every
+  send refused with `receiverUnavailable` rather than sent blind.
+* `hasTelephonyMessaging` accepted only `FEATURE_TELEPHONY_MESSAGING`, while the
+  plugin's own setup docs and example manifest declare `FEATURE_TELEPHONY`. A
+  device declaring only the parent feature was refused with `noTelephony` on
+  hardware that could send. Either feature is now accepted.
+* CI now runs with an explicit least-privilege `permissions: contents: read`, and
+  the third-party actions are pinned to commit SHAs rather than mutable tags.
 
 ### Changed
 
@@ -157,7 +192,9 @@ try {
 
 ### Known limitations
 
-* Only the default SIM subscription is used.
+* The default SMS subscription is used, and a dual-SIM device must have one set —
+  otherwise the send is refused with `noSmsSubscription`. There is no API to pick a
+  specific SIM per send.
 * Delivery reports are only as reliable as the carrier. `SmsCompletion.delivered`
   ends in `deliveryTimeout` on networks that do not emit them, which is many of
   them.

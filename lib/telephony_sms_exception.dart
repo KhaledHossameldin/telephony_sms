@@ -41,6 +41,23 @@ enum TelephonySmsErrorCode {
   /// The device cannot send SMS at all — a tablet or other Wi-Fi-only device.
   noTelephony('no_telephony'),
 
+  /// No default SMS subscription is set on a device with more than one SIM.
+  ///
+  /// Sending would otherwise make the system interrupt with a SIM-picker dialog
+  /// in the foreground, or fail outright in the background, so the plugin refuses
+  /// up front. The user must set a default under Settings → Network & internet →
+  /// SIMs → SMS. Not retryable until they do.
+  noSmsSubscription('no_sms_subscription'),
+
+  /// The plugin could not register the receiver it needs to confirm sends.
+  ///
+  /// Without it no send can ever be confirmed, so sending is refused rather than
+  /// done blind. Two things cause it: a merged manifest missing the
+  /// `${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` that
+  /// androidx.core normally contributes, or an androidx.core resolved below
+  /// 1.9.0. Not retryable — both are build-configuration problems.
+  receiverUnavailable('receiver_unavailable'),
+
   /// `SmsManager` rejected the message before it reached the radio.
   sendFailed('send_failed'),
 
@@ -120,7 +137,12 @@ enum TelephonySmsErrorCode {
   /// Sending is blocked while an emergency call is in progress.
   blockedDuringEmergency('blocked_during_emergency'),
 
-  /// The device has no default SMS app.
+  /// No SMS subscription could be resolved for the send.
+  ///
+  /// Despite the platform name, on a modern multi-SIM device this usually means
+  /// no default SMS SIM is set rather than a missing default SMS app. Set one
+  /// under Settings → Network & internet → SIMs → SMS. See [noSmsSubscription],
+  /// which the plugin raises up front for the same underlying cause.
   noDefaultSmsApp('no_default_sms_app'),
 
   /// This user profile is not allowed to send SMS.
@@ -139,8 +161,12 @@ enum TelephonySmsErrorCode {
 
   /// No send confirmation arrived before the timeout.
   ///
-  /// The message most likely never left the device, but that is not certain — a
-  /// confirmation can be lost. Retrying can therefore send it twice.
+  /// This means the plugin **could not determine** whether the message went out.
+  /// It may have. For that reason it is deliberately **not** [isTransient]: an
+  /// automatic retry would send the message a second time whenever it did go out.
+  /// Decide per message whether a possible duplicate is acceptable before
+  /// retrying by hand — and if it is not, treat this as a failure to surface, not
+  /// to retry.
   sendTimeout('send_timeout'),
 
   /// The message was sent, but no delivery report arrived before the timeout.
@@ -169,10 +195,10 @@ enum TelephonySmsErrorCode {
   /// off, a busy network, a rate limit. It does not cover anything the user or
   /// the app has to fix first, such as a denied permission or a barred number.
   ///
-  /// [sendTimeout] is included because the message most likely never went out,
-  /// but a lost confirmation is possible, so a retry can duplicate it. Guard
-  /// against that if duplicates matter. [deliveryTimeout] is deliberately not
-  /// included: the message was confirmed sent.
+  /// The timeouts are deliberately excluded. [sendTimeout] means the plugin could
+  /// not tell whether the message went out, so an automatic retry risks a
+  /// duplicate; [deliveryTimeout] means it *was* sent. Both cost money to retry
+  /// blindly, so both are left for the caller to decide about explicitly.
   bool get isTransient => switch (this) {
     noService ||
     radioOff ||
@@ -184,8 +210,7 @@ enum TelephonySmsErrorCode {
     modemError ||
     noMemory ||
     noResources ||
-    systemError ||
-    sendTimeout => true,
+    systemError => true,
     _ => false,
   };
 
