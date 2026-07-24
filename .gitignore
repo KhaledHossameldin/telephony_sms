@@ -4,6 +4,7 @@
 *.pyc
 *.swp
 .DS_Store
+._*
 .atom/
 .buildlog/
 .history
@@ -28,3 +29,6 @@ migrate_working_dir/
 .dart_tool/
 .packages
 build/
+
+# graphify knowledge graph output
+graphify-out/
