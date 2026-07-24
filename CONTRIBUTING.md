@@ -16,11 +16,15 @@ Studio works), and an Android SDK with API 36 installed.
 
 ## Branching and pull requests
 
-`main` is the release branch. Day-to-day work lands on `dev` first.
+`main` is the only long-lived branch, and it is always releasable.
 
-1. Branch from `dev`.
-2. Open your pull request against `dev`.
-3. `dev` is merged into `main` when a release is cut.
+1. Branch from `main`, naming the branch for what it does — `fix/permission-hang`,
+   `feat/multipart`, `chore/bump-agp`.
+2. Open your pull request against `main`.
+3. Squash or merge once CI is green, then delete the branch.
+
+Releases are cut from `main` by bumping the version in `pubspec.yaml`, updating
+`CHANGELOG.md`, and tagging.
 
 CI must be green before a pull request is merged.
 
