@@ -20,11 +20,35 @@ enum TelephonySmsErrorCode {
   /// The device does not provide an `SmsManager`.
   smsManagerUnavailable('sms_manager_unavailable'),
 
-  /// `SmsManager` rejected the message.
+  /// `SmsManager` rejected the message before it reached the radio.
   sendFailed('send_failed'),
 
   /// The plugin is not attached to a Flutter engine.
   noContext('no_context'),
+
+  /// The device has no cellular service. Safe to retry once service returns.
+  noService('no_service'),
+
+  /// The radio is off — airplane mode, most likely. Safe to retry once it is on.
+  radioOff('radio_off'),
+
+  /// The telephony stack produced a null PDU. Not retryable as-is.
+  nullPdu('null_pdu'),
+
+  /// The radio reported an unspecified failure. Often transient.
+  genericFailure('generic_failure'),
+
+  /// No confirmation arrived before the timeout.
+  ///
+  /// When waiting on delivery this usually means the message *was* sent and the
+  /// carrier simply does not emit delivery reports.
+  sendTimeout('send_timeout'),
+
+  /// The message was sent, but the carrier reported it as not delivered.
+  notDelivered('not_delivered'),
+
+  /// The plugin detached from the engine while the send was in flight.
+  cancelled('cancelled'),
 
   /// The platform reported a code this version of the plugin does not know.
   unknown('unknown');

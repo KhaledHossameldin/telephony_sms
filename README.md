@@ -14,6 +14,10 @@ does not permit sending SMS without user interaction.
 | ----------- | -------- |
 | **Support** | SDK 24+  |
 
+Messages are sent silently in the background, split across multiple parts when
+needed, and the send result is reported back so failures are visible rather than
+silent.
+
 ## Setup
 
 Add the `SEND_SMS` permission to your app's `AndroidManifest.xml`. Android
@@ -53,7 +57,54 @@ try {
 }
 ```
 
-`sendSMS()` completes once the message has been handed to the radio.
+`sendSMS()` completes once **the radio confirms the message was sent**, and
+throws otherwise. Long messages are split and sent as a multipart message; the
+send succeeds only if every part does.
+
+### Sent vs delivered
+
+These are two different signals, and only the first is reliable.
+
+**Sent** means the radio accepted the message and it left the device. This is
+what `sendSMS()` waits for by default, and it is the one that matters for a retry
+loop — a failure here means the message never went out.
+
+**Delivered** means the carrier confirmed it reached the recipient's handset.
+Delivery reports are optional on the network side, and plenty of carriers never
+emit one. Opt in with `completeOn`:
+
+```dart
+await telephonySMS.sendSMS(
+  phone: '+201000000000',
+  message: 'Hello!',
+  completeOn: SmsCompletion.delivered,
+  timeout: const Duration(minutes: 2),
+);
+```
+
+If no report arrives before `timeout`, the call throws `sendTimeout` even though
+the message may well have arrived. Treat delivery as a bonus, not a guarantee.
+
+### Retrying
+
+The error code tells you whether retrying is worthwhile:
+
+```dart
+try {
+  await telephonySMS.sendSMS(phone: phone, message: message);
+} on TelephonySmsException catch (e) {
+  switch (e.code) {
+    case TelephonySmsErrorCode.noService:
+    case TelephonySmsErrorCode.radioOff:
+    case TelephonySmsErrorCode.genericFailure:
+      // Transient — retry once conditions change.
+    case TelephonySmsErrorCode.permissionDenied:
+      // Not retryable until the user grants the permission.
+    default:
+      rethrow;
+  }
+}
+```
 
 ### Error handling
 
@@ -68,8 +119,15 @@ Every platform failure throws a `TelephonySmsException` with a
 | `activityDetached`       | The activity went away before the permission dialog was answered |
 | `alreadyRequesting`      | A permission request is already in flight                      |
 | `smsManagerUnavailable`  | The device provides no `SmsManager`                            |
-| `sendFailed`             | `SmsManager` rejected the message                              |
+| `sendFailed`             | The message was rejected before reaching the radio             |
 | `noContext`              | The plugin is not attached to a Flutter engine                 |
+| `noService`              | No cellular service. Retryable                                 |
+| `radioOff`               | The radio is off, most likely airplane mode. Retryable         |
+| `nullPdu`                | The telephony stack produced a null PDU                        |
+| `genericFailure`         | Unspecified radio failure, often transient                     |
+| `sendTimeout`            | No confirmation arrived before `timeout`                       |
+| `notDelivered`           | Sent, but the carrier reported it as not delivered             |
+| `cancelled`              | The plugin detached while the send was in flight               |
 | `unknown`                | An error code this version of the plugin does not recognise    |
 
 Note that a denied permission is **not** an exception — `requestPermission()`
@@ -85,13 +143,10 @@ or they will be rejected. Check that your app qualifies before shipping.
 
 ## Limitations
 
-* **Single-part messages only.** Messages longer than one SMS part — 160
-  characters in GSM-7, or 70 when any character falls outside it, which includes
-  all Arabic text and emoji — are truncated. Multipart is not implemented.
-* **No delivery confirmation.** `sendSMS()` completes when the radio accepts the
-  message, not when the recipient receives it.
 * **Default SIM only.** There is no way to choose a subscription on dual-SIM
   devices.
+* **Delivery reports depend on the carrier.** `SmsCompletion.delivered` can only
+  report what the network tells it, and many networks tell it nothing.
 
 ## Example
 

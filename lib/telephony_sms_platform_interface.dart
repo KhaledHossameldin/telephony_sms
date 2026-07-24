@@ -1,5 +1,6 @@
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
+import 'telephony_sms_completion.dart';
 import 'telephony_sms_method_channel.dart';
 
 /// The interface that platform-specific implementations of `telephony_sms`
@@ -33,10 +34,13 @@ abstract class TelephonySMSPlatform extends PlatformInterface {
     throw UnimplementedError('requestPermission() has not been implemented.');
   }
 
-  /// Sends [message] to [phone].
+  /// Sends [message] to [phone], completing when [completeOn] is satisfied or
+  /// failing after [timeout].
   Future<void> sendSMS({
     required String phone,
     required String message,
+    SmsCompletion completeOn = SmsCompletion.sent,
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     throw UnimplementedError('sendSMS() has not been implemented.');
   }

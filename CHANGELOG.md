@@ -6,6 +6,10 @@
   resolves to whether the `SEND_SMS` permission is granted.
 * Platform failures now throw a typed `TelephonySmsException` carrying a
   `TelephonySmsErrorCode`, instead of a raw `PlatformException`.
+* `sendSMS()` now completes when the **radio confirms the message was sent**,
+  rather than the moment it is handed off, and throws when the radio reports a
+  failure. Previously a message that never left the device still reported
+  success.
 * The minimum supported Android API level is now 24 (was 19), following
   Flutter's own minimum.
 
@@ -26,6 +30,26 @@ try {
   debugPrint('${e.code.name}: ${e.message}');
 }
 ```
+
+### Added
+
+* Send results are reported back from the radio. `sendSMS()` now passes a
+  `sentIntent` and surfaces `noService`, `radioOff`, `nullPdu` and
+  `genericFailure`. `sendTextMessage` never throws on radio failure — it reports
+  only through that intent — so these failures were previously invisible and a
+  dropped message looked identical to a delivered one. Resolves
+  [#8](https://github.com/KhaledHossameldin/telephony_sms/issues/8).
+* Optional delivery confirmation via `completeOn: SmsCompletion.delivered`,
+  documented as carrier-dependent. Resolves
+  [#7](https://github.com/KhaledHossameldin/telephony_sms/issues/7).
+* Multipart messages. Long messages are split with `divideMessage` and sent via
+  `sendMultipartTextMessage`, succeeding only if every part does. Messages over
+  160 GSM-7 characters, or 70 containing Arabic or emoji, were previously
+  truncated without warning.
+* A `timeout` on `sendSMS()`, defaulting to 30 seconds, so a confirmation that
+  never arrives cannot hang the future.
+* Error codes `noService`, `radioOff`, `nullPdu`, `genericFailure`,
+  `sendTimeout`, `notDelivered` and `cancelled`.
 
 ### Fixed
 
@@ -66,11 +90,9 @@ try {
 
 ### Known limitations
 
-* Messages longer than one SMS part (160 GSM-7 characters, or 70 when any
-  character falls outside GSM-7) are truncated. Multipart is not implemented.
-* `sendSMS()` completes when the radio accepts the message, not when it is
-  delivered.
 * Only the default SIM subscription is used.
+* Delivery reports are only as reliable as the carrier. `SmsCompletion.delivered`
+  times out on networks that do not emit them, which is many of them.
 
 ## 0.0.4
 

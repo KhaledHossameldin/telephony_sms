@@ -27,6 +27,9 @@ class _HomePageState extends State<HomePage> {
   final _phoneController = TextEditingController();
   final _messageController = TextEditingController(text: 'Hello from Flutter!');
 
+  bool _awaitDelivery = false;
+  bool _sending = false;
+
   @override
   void dispose() {
     _phoneController.dispose();
@@ -51,14 +54,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _sendSMS() async {
+    setState(() => _sending = true);
     try {
       await _telephonySMS.sendSMS(
         phone: _phoneController.text,
         message: _messageController.text,
+        completeOn:
+            _awaitDelivery ? SmsCompletion.delivered : SmsCompletion.sent,
       );
-      _report('Message handed to the radio');
+      _report(_awaitDelivery ? 'Delivered' : 'Sent');
     } on TelephonySmsException catch (e) {
+      // The error code is what tells you whether a retry is worth attempting:
+      // noService and radioOff are transient, permissionDenied is not.
       _report('${e.code.name}: ${e.message}');
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -88,15 +98,25 @@ class _HomePageState extends State<HomePage> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 24),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _awaitDelivery,
+              onChanged: (value) => setState(() => _awaitDelivery = value),
+              title: const Text('Wait for delivery report'),
+              subtitle: const Text(
+                'Many carriers never send one, so this often times out even '
+                'when the message arrived.',
+              ),
+            ),
+            const SizedBox(height: 12),
             ElevatedButton(
               onPressed: _requestPermission,
               child: const Text('Check Permission'),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
-              onPressed: _sendSMS,
-              child: const Text('Send SMS'),
+              onPressed: _sending ? null : _sendSMS,
+              child: Text(_sending ? 'Sending…' : 'Send SMS'),
             ),
           ],
         ),
