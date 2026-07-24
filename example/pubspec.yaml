@@ -4,8 +4,11 @@ description: Demonstrates how to use the telephony_sms plugin.
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
+# Mirrors the plugin's own floor: the example builds the plugin, so it cannot run
+# on anything the plugin does not support.
 environment:
-  sdk: '>=3.1.5 <4.0.0'
+  sdk: '>=3.8.0 <4.0.0'
+  flutter: '>=3.35.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions

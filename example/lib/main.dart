@@ -59,14 +59,16 @@ class _HomePageState extends State<HomePage> {
       await _telephonySMS.sendSMS(
         phone: _phoneController.text,
         message: _messageController.text,
-        completeOn:
-            _awaitDelivery ? SmsCompletion.delivered : SmsCompletion.sent,
+        completeOn: _awaitDelivery
+            ? SmsCompletion.delivered
+            : SmsCompletion.sent,
       );
       _report(_awaitDelivery ? 'Delivered' : 'Sent');
     } on TelephonySmsException catch (e) {
-      // The error code is what tells you whether a retry is worth attempting:
-      // noService and radioOff are transient, permissionDenied is not.
-      _report('${e.code.name}: ${e.message}');
+      // isTransient is what tells you whether a retry is worth attempting: a
+      // radio that is off will come back, a denied permission will not.
+      final hint = e.code.isTransient ? ' (retryable)' : '';
+      _report('${e.code.name}$hint: ${e.message}');
     } finally {
       if (mounted) setState(() => _sending = false);
     }

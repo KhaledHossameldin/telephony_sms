@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.telephony.SmsManager
+import android.telephony.SmsMessage
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -22,6 +23,7 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 /** TelephonySmsPlugin */
@@ -44,12 +46,14 @@ class TelephonySmsPlugin :
   private val pendingSends = mutableMapOf<String, InFlightSend>()
 
   /**
-   * Request codes must be unique per [PendingIntent]: two PendingIntents that
-   * share an action and request code are considered equal and the second reuses
-   * the first, because extras are not part of that comparison. A monotonic
-   * counter keeps every part of every concurrent send distinct.
+   * Distinguishes this plugin instance's sends from those of any other instance
+   * in the same process.
+   *
+   * The broadcast actions are namespaced per app, not per engine, so every
+   * instance sees every instance's broadcasts. Without a per-instance token two
+   * engines would both mint "send-1" and each would resolve the other's future.
    */
-  private val requestCodes = AtomicInteger(0)
+  private val instanceToken = UUID.randomUUID().toString()
 
   private val sendIds = AtomicInteger(0)
 
@@ -68,6 +72,8 @@ class TelephonySmsPlugin :
     val progress: PendingSend,
     val awaitDelivery: Boolean,
     val timeoutRunnable: Runnable,
+    /** Held so they can be released once the send resolves. */
+    val intents: List<PendingIntent>,
   ) {
     var sentConfirmed: Boolean = false
     var delivery: PendingSend? = null
@@ -88,17 +94,20 @@ class TelephonySmsPlugin :
     channel?.setMethodCallHandler(null)
     channel = null
 
-    // Anything still waiting on a broadcast can never be answered now, so fail
-    // it rather than leaving the Dart future hanging forever.
-    for (send in pendingSends.values.toList()) {
-      mainHandler.removeCallbacks(send.timeoutRunnable)
-      send.result.error(
-        ERROR_CANCELLED,
-        "The plugin was detached before the send completed.",
-        null,
-      )
+    // Anything still waiting can never be answered now, so fail it rather than
+    // leaving the Dart future hanging forever.
+    for (id in pendingSends.keys.toList()) {
+      finish(id) {
+        it.error(ERROR_DETACHED, "The plugin was detached before the send completed.", null)
+      }
     }
-    pendingSends.clear()
+
+    pendingPermissionResult?.error(
+      ERROR_DETACHED,
+      "The plugin was detached before the permission request completed.",
+      null,
+    )
+    pendingPermissionResult = null
 
     context?.let { unregisterReceiver(it) }
     context = null
@@ -192,6 +201,14 @@ class TelephonySmsPlugin :
       return
     }
 
+    // A permission the app never declared can never be granted: the dialog does
+    // not appear and the request comes straight back denied, which is
+    // indistinguishable from the user saying no.
+    if (!isSendSmsDeclared(context)) {
+      result.error(ERROR_PERMISSION_NOT_DECLARED, MISSING_PERMISSION_MESSAGE, null)
+      return
+    }
+
     val activity = this.activity
     if (activity == null) {
       result.error(
@@ -243,11 +260,22 @@ class TelephonySmsPlugin :
     }
 
     if (!hasSendSmsPermission(context)) {
-      result.error(
-        ERROR_PERMISSION_DENIED,
-        "The SEND_SMS permission has not been granted. Call requestPermission() first.",
-        null,
-      )
+      if (isSendSmsDeclared(context)) {
+        result.error(
+          ERROR_PERMISSION_DENIED,
+          "The SEND_SMS permission has not been granted. Call requestPermission() first.",
+          null,
+        )
+      } else {
+        result.error(ERROR_PERMISSION_NOT_DECLARED, MISSING_PERMISSION_MESSAGE, null)
+      }
+      return
+    }
+
+    // Tablets and other Wi-Fi-only devices still hand out an SmsManager, and
+    // only fail once the message reaches it.
+    if (!hasTelephonyMessaging(context)) {
+      result.error(ERROR_NO_TELEPHONY, "This device cannot send SMS messages.", null)
       return
     }
 
@@ -263,21 +291,21 @@ class TelephonySmsPlugin :
 
     val awaitDelivery = call.argument<String>(ARGUMENT_COMPLETE_ON) == COMPLETE_ON_DELIVERED
     val timeoutMillis = (call.argument<Number>(ARGUMENT_TIMEOUT_MILLIS)?.toLong() ?: 0L)
-      .coerceAtLeast(1_000L)
+      .coerceAtLeast(MINIMUM_TIMEOUT_MILLIS)
 
     val parts = smsManager.divideMessage(message) ?: arrayListOf(message)
     if (parts.isEmpty()) parts.add(message)
+    if (parts.size > MAX_MESSAGE_PARTS) {
+      result.error(
+        ERROR_INVALID_ARGUMENTS,
+        "The message needs ${parts.size} parts, more than the $MAX_MESSAGE_PARTS a single " +
+          "multipart message can carry. Send it in smaller pieces.",
+        null,
+      )
+      return
+    }
 
-    val id = "send-${sendIds.incrementAndGet()}"
-    val timeoutRunnable = Runnable { onSendTimedOut(id) }
-    val send = InFlightSend(
-      result = result,
-      progress = PendingSend(id, parts.size),
-      awaitDelivery = awaitDelivery,
-      timeoutRunnable = timeoutRunnable,
-    )
-    if (awaitDelivery) send.delivery = PendingSend(id, parts.size)
-    pendingSends[id] = send
+    val id = "$instanceToken/${sendIds.incrementAndGet()}"
 
     val sentIntents = ArrayList<PendingIntent>(parts.size)
     val deliveryIntents = if (awaitDelivery) ArrayList<PendingIntent>(parts.size) else null
@@ -285,6 +313,16 @@ class TelephonySmsPlugin :
       sentIntents.add(broadcastIntent(context, sentAction(context), id, index))
       deliveryIntents?.add(broadcastIntent(context, deliveredAction(context), id, index))
     }
+
+    val send = InFlightSend(
+      result = result,
+      progress = PendingSend(parts.size),
+      awaitDelivery = awaitDelivery,
+      timeoutRunnable = Runnable { onSendTimedOut(id) },
+      intents = sentIntents + (deliveryIntents ?: emptyList()),
+    )
+    if (awaitDelivery) send.delivery = PendingSend(parts.size)
+    pendingSends[id] = send
 
     try {
       if (parts.size == 1) {
@@ -304,18 +342,26 @@ class TelephonySmsPlugin :
           deliveryIntents,
         )
       }
-      mainHandler.postDelayed(timeoutRunnable, timeoutMillis)
+      mainHandler.postDelayed(send.timeoutRunnable, timeoutMillis)
+    } catch (e: SecurityException) {
+      // The permission was revoked between the check above and this call.
+      abandon(id, ERROR_PERMISSION_DENIED, e.message ?: "The SEND_SMS permission was revoked.")
+    } catch (e: IllegalArgumentException) {
+      // Thrown for a destination address the telephony stack will not accept.
+      abandon(id, ERROR_INVALID_ARGUMENTS, e.message ?: "The message arguments were rejected.")
+    } catch (e: UnsupportedOperationException) {
+      // Thrown from API 36 on devices without FEATURE_TELEPHONY_MESSAGING.
+      abandon(id, ERROR_NO_TELEPHONY, e.message ?: "This device cannot send SMS messages.")
     } catch (e: Exception) {
-      // Only argument-level problems throw here. Radio failures arrive on the
+      // Only argument-level problems reach here. Radio failures arrive on the
       // sent broadcast instead, which is the whole reason these intents exist.
-      pendingSends.remove(id)
-      result.error(ERROR_SEND_FAILED, e.message ?: "Failed to send the SMS message.", null)
+      abandon(id, ERROR_SEND_FAILED, e.message ?: "Failed to send the SMS message.")
     }
   }
 
   /**
    * A [PendingIntent] that must be mutable: the telephony stack writes the
-   * result code and an error code into it, and an immutable one silently
+   * result code and the status report into it, and an immutable one silently
    * discards them.
    */
   private fun broadcastIntent(
@@ -345,18 +391,14 @@ class TelephonySmsPlugin :
     val context = this.context ?: return
     val id = intent.getStringExtra(EXTRA_SEND_ID) ?: return
     val partIndex = intent.getIntExtra(EXTRA_PART_INDEX, -1)
+    // Another engine's send, or one already resolved.
     val send = pendingSends[id] ?: return
 
     when (action) {
       sentAction(context) -> {
-        if (!send.progress.recordPart(partIndex, resultCode)) return
-
-        val outcome = send.progress.outcome
-        val errorCode = outcome.errorCode
-        if (errorCode != null) {
-          finish(id) { it.error(errorCode, outcome.message, null) }
-          return
-        }
+        send.progress.recordPart(partIndex, resultCode)
+        if (reportFailure(id, send.progress)) return
+        if (!send.progress.isComplete) return
 
         send.sentConfirmed = true
         // Delivery reports arrive later, and on many carriers never at all, so
@@ -366,39 +408,102 @@ class TelephonySmsPlugin :
 
       deliveredAction(context) -> {
         val delivery = send.delivery ?: return
-        if (!delivery.recordPart(partIndex, resultCode)) return
+        when (deliveryStateOf(intent, resultCode)) {
+          // The carrier is still trying. Say nothing and let the timeout decide.
+          DeliveryState.PENDING -> return
 
-        val outcome = delivery.outcome
-        if (outcome.isSuccess) {
-          finish(id) { it.success(null) }
-        } else {
-          finish(id) {
-            it.error(
-              ERROR_NOT_DELIVERED,
-              "The message was sent but the carrier reported it as not delivered.",
-              null,
-            )
-          }
+          DeliveryState.DELIVERED -> delivery.recordSuccess(partIndex)
+
+          DeliveryState.FAILED -> delivery.recordFailure(
+            partIndex,
+            ERROR_NOT_DELIVERED,
+            "${delivery.describePart(partIndex)} was sent, but the carrier reported it as " +
+              "not delivered.",
+          )
         }
+
+        if (reportFailure(id, delivery)) return
+        if (delivery.isComplete) finish(id) { it.success(null) }
       }
     }
   }
 
-  private fun onSendTimedOut(id: String) {
-    val send = pendingSends[id] ?: return
-    val message = if (send.awaitDelivery && send.sentConfirmed) {
-      "The message was sent, but no delivery report arrived before the timeout. " +
-        "Many carriers never send delivery reports."
-    } else {
-      "No send confirmation arrived before the timeout."
+  /**
+   * What the carrier's status report says.
+   *
+   * The report is a PDU in an extra; the broadcast's result code is `RESULT_OK`
+   * on every delivery broadcast whatever the report says, so it is only a
+   * fallback for a report that is missing or unparseable.
+   */
+  private fun deliveryStateOf(intent: Intent, resultCode: Int): DeliveryState {
+    val pdu = intent.getByteArrayExtra(EXTRA_PDU)
+    if (pdu != null) {
+      val format = intent.getStringExtra(EXTRA_FORMAT)
+      val message = runCatching {
+        if (format == null) {
+          // The format extra should always be there. Fall back to letting the
+          // platform guess rather than dropping the report entirely.
+          @Suppress("DEPRECATION")
+          SmsMessage.createFromPdu(pdu)
+        } else {
+          SmsMessage.createFromPdu(pdu, format)
+        }
+      }.getOrNull()
+      if (message != null) return classifyDeliveryStatus(message.status)
     }
-    finish(id) { it.error(ERROR_SEND_TIMEOUT, message, null) }
+
+    return if (resultCode == SendResultCodes.RESULT_OK) {
+      DeliveryState.DELIVERED
+    } else {
+      DeliveryState.FAILED
+    }
   }
 
-  /** Resolves a send exactly once and clears its timeout. */
+  /**
+   * Reports [progress]'s failure if it has one, and returns whether it did.
+   *
+   * Called before checking completeness, so that a failed part resolves the send
+   * immediately: when one part fails the radio usually abandons the rest, and
+   * waiting for broadcasts that never arrive replaces the real cause with a
+   * timeout.
+   */
+  private fun reportFailure(id: String, progress: PendingSend): Boolean {
+    val outcome = progress.outcome
+    val errorCode = outcome.errorCode ?: return false
+    finish(id) { it.error(errorCode, outcome.message, null) }
+    return true
+  }
+
+  private fun onSendTimedOut(id: String) {
+    val send = pendingSends[id] ?: return
+    if (send.awaitDelivery && send.sentConfirmed) {
+      finish(id) {
+        it.error(
+          ERROR_DELIVERY_TIMEOUT,
+          "The message was sent, but no delivery report arrived before the timeout. Many " +
+            "carriers never send delivery reports. Do not retry: the message went out.",
+          null,
+        )
+      }
+    } else {
+      finish(id) {
+        it.error(ERROR_SEND_TIMEOUT, "No send confirmation arrived before the timeout.", null)
+      }
+    }
+  }
+
+  /** Drops a send that never reached the radio, before any broadcast can arrive. */
+  private fun abandon(id: String, errorCode: String, message: String) {
+    finish(id) { it.error(errorCode, message, null) }
+  }
+
+  /** Resolves a send exactly once, clearing its timeout and releasing its intents. */
   private fun finish(id: String, reply: (Result) -> Unit) {
     val send = pendingSends.remove(id) ?: return
     mainHandler.removeCallbacks(send.timeoutRunnable)
+    // Nothing will fire these now, and the system holds them until something
+    // does.
+    send.intents.forEach { it.cancel() }
     reply(send.result)
   }
 
@@ -413,10 +518,19 @@ class TelephonySmsPlugin :
   ): Boolean {
     if (requestCode != PERMISSION_REQUEST_CODE) return false
 
-    val granted = grantResults.isNotEmpty() &&
-      grantResults[0] == PackageManager.PERMISSION_GRANTED
-    pendingPermissionResult?.success(granted)
+    val pending = pendingPermissionResult ?: return false
+
+    // The request code alone is not proof the result is ours: another plugin may
+    // use the same one. An interrupted request is the exception — it comes back
+    // with both arrays empty, and is a denial.
+    val index = permissions.indexOf(Manifest.permission.SEND_SMS)
+    if (index < 0 && permissions.isNotEmpty()) return false
+
     pendingPermissionResult = null
+    val granted = index >= 0 &&
+      index < grantResults.size &&
+      grantResults[index] == PackageManager.PERMISSION_GRANTED
+    pending.success(granted)
     return true
   }
 
@@ -425,6 +539,41 @@ class TelephonySmsPlugin :
   private fun hasSendSmsPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) ==
       PackageManager.PERMISSION_GRANTED
+
+  /**
+   * Whether the host app's merged manifest declares `SEND_SMS` at all.
+   *
+   * The plugin does not declare it, so that depending on this package never
+   * silently adds a restricted permission to someone's app. The cost is that an
+   * app which forgets to declare it sees every request denied with no
+   * explanation, which this turns into one.
+   *
+   * Assumes declared if the lookup fails: refusing to send over a failed
+   * introspection would be worse than the problem it detects.
+   */
+  private fun isSendSmsDeclared(context: Context): Boolean = runCatching {
+    val flags = PackageManager.GET_PERMISSIONS
+    val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      context.packageManager.getPackageInfo(
+        context.packageName,
+        PackageManager.PackageInfoFlags.of(flags.toLong()),
+      )
+    } else {
+      @Suppress("DEPRECATION")
+      context.packageManager.getPackageInfo(context.packageName, flags)
+    }
+    info.requestedPermissions?.contains(Manifest.permission.SEND_SMS) == true
+  }.getOrDefault(true)
+
+  private fun hasTelephonyMessaging(context: Context): Boolean {
+    val packageManager = context.packageManager
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)
+    } else {
+      @Suppress("DEPRECATION")
+      packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY)
+    }
+  }
 
   /**
    * Resolved on every send rather than cached, so the manager can never go stale
@@ -449,8 +598,26 @@ class TelephonySmsPlugin :
   private fun deliveredAction(context: Context) = "${context.packageName}.TELEPHONY_SMS_DELIVERED"
 
   private companion object {
-    const val CHANNEL_NAME = "telephony_sms"
-    const val PERMISSION_REQUEST_CODE = 39
+    const val CHANNEL_NAME = "com.khaledhossameldin/telephony_sms"
+
+    /**
+     * Deliberately not a small round number: request codes are a per-activity
+     * namespace shared with every other plugin, and a collision would hand this
+     * plugin somebody else's permission result.
+     *
+     * Must fit in 16 bits. `FragmentActivity`, which `FlutterFragmentActivity`
+     * extends, rejects anything wider.
+     */
+    const val PERMISSION_REQUEST_CODE = 0x5353
+
+    /**
+     * Request codes must be unique per [PendingIntent]: two PendingIntents that
+     * share an action and request code are considered equal and the second
+     * reuses the first, because extras are not part of that comparison. The
+     * counter is process-wide rather than per-instance so that two engines
+     * cannot mint colliding codes.
+     */
+    val requestCodes = AtomicInteger(0)
 
     const val METHOD_REQUEST_PERMISSION = "requestPermission"
     const val METHOD_SEND_SMS = "sendSMS"
@@ -465,16 +632,33 @@ class TelephonySmsPlugin :
     const val EXTRA_SEND_ID = "telephony_sms.send_id"
     const val EXTRA_PART_INDEX = "telephony_sms.part_index"
 
+    /** Extras the telephony stack adds to the delivery broadcast. */
+    const val EXTRA_PDU = "pdu"
+    const val EXTRA_FORMAT = "format"
+
+    const val MINIMUM_TIMEOUT_MILLIS = 1_000L
+
+    /** The platform caps a multipart message at 255 parts. */
+    const val MAX_MESSAGE_PARTS = 255
+
     const val ERROR_INVALID_ARGUMENTS = "invalid_arguments"
     const val ERROR_PERMISSION_DENIED = "permission_denied"
+    const val ERROR_PERMISSION_NOT_DECLARED = "permission_not_declared"
     const val ERROR_NO_ACTIVITY = "no_activity"
     const val ERROR_ACTIVITY_DETACHED = "activity_detached"
     const val ERROR_ALREADY_REQUESTING = "already_requesting"
     const val ERROR_SMS_MANAGER_UNAVAILABLE = "sms_manager_unavailable"
+    const val ERROR_NO_TELEPHONY = "no_telephony"
     const val ERROR_SEND_FAILED = "send_failed"
     const val ERROR_NO_CONTEXT = "no_context"
     const val ERROR_SEND_TIMEOUT = "send_timeout"
+    const val ERROR_DELIVERY_TIMEOUT = "delivery_timeout"
     const val ERROR_NOT_DELIVERED = "not_delivered"
-    const val ERROR_CANCELLED = "cancelled"
+    const val ERROR_DETACHED = "detached"
+
+    const val MISSING_PERMISSION_MESSAGE =
+      "This app's manifest does not declare android.permission.SEND_SMS, so the permission can " +
+        "never be granted. Add <uses-permission android:name=\"android.permission.SEND_SMS\" /> " +
+        "to android/app/src/main/AndroidManifest.xml."
   }
 }

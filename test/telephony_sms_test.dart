@@ -144,6 +144,14 @@ void main() {
       }
     });
 
+    // Two values sharing a wire string would make fromCode return whichever
+    // comes first, silently discarding the other.
+    test('every wire code is unique', () {
+      final codes = TelephonySmsErrorCode.values.map((e) => e.code).toList();
+
+      expect(codes.toSet(), hasLength(codes.length));
+    });
+
     test('falls back to unknown', () {
       expect(
         TelephonySmsErrorCode.fromCode('not_a_real_code'),
@@ -152,6 +160,85 @@ void main() {
       expect(
         TelephonySmsErrorCode.fromCode(null),
         TelephonySmsErrorCode.unknown,
+      );
+    });
+  });
+
+  group('TelephonySmsErrorCode.isTransient', () {
+    test('covers the conditions that clear on their own', () {
+      const transient = [
+        TelephonySmsErrorCode.noService,
+        TelephonySmsErrorCode.radioOff,
+        TelephonySmsErrorCode.radioNotAvailable,
+        TelephonySmsErrorCode.genericFailure,
+        TelephonySmsErrorCode.limitExceeded,
+        TelephonySmsErrorCode.networkReject,
+        TelephonySmsErrorCode.networkError,
+        TelephonySmsErrorCode.modemError,
+        TelephonySmsErrorCode.noMemory,
+        TelephonySmsErrorCode.noResources,
+        TelephonySmsErrorCode.systemError,
+        TelephonySmsErrorCode.sendTimeout,
+      ];
+
+      for (final code in TelephonySmsErrorCode.values) {
+        expect(
+          code.isTransient,
+          transient.contains(code),
+          reason: '${code.name} is on the wrong side of isTransient',
+        );
+      }
+    });
+
+    // Retrying these sends the message a second time.
+    test('excludes outcomes where the message already went out', () {
+      expect(TelephonySmsErrorCode.deliveryTimeout.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.notDelivered.isTransient, isFalse);
+    });
+
+    test('excludes anything the user or the app has to fix first', () {
+      expect(TelephonySmsErrorCode.permissionDenied.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.permissionNotDeclared.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.fdnCheckFailure.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.shortCodeNeverAllowed.isTransient, isFalse);
+      expect(TelephonySmsErrorCode.unsupportedPlatform.isTransient, isFalse);
+    });
+  });
+
+  group('TelephonySmsException', () {
+    test('compares by code and message', () {
+      const a = TelephonySmsException(
+        TelephonySmsErrorCode.radioOff,
+        'Radio off.',
+      );
+      const b = TelephonySmsException(
+        TelephonySmsErrorCode.radioOff,
+        'Radio off.',
+      );
+      const differentMessage = TelephonySmsException(
+        TelephonySmsErrorCode.radioOff,
+        'Something else.',
+      );
+      const differentCode = TelephonySmsException(
+        TelephonySmsErrorCode.noService,
+        'Radio off.',
+      );
+
+      expect(a, b);
+      expect(a.hashCode, b.hashCode);
+      expect(a, isNot(differentMessage));
+      expect(a, isNot(differentCode));
+    });
+
+    test('describes itself with the wire code', () {
+      const exception = TelephonySmsException(
+        TelephonySmsErrorCode.limitExceeded,
+        'Too many.',
+      );
+
+      expect(
+        exception.toString(),
+        'TelephonySmsException(limit_exceeded): Too many.',
       );
     });
   });
