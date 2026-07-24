@@ -76,7 +76,7 @@ dependencies {
     // ContextCompat.registerReceiver. It previously arrived only transitively
     // through the Flutter embedding; registerReceiver with the exported flag
     // needs 1.9.0 or newer, so the floor is declared rather than assumed.
-    implementation("androidx.core:core:1.13.1")
+    implementation("androidx.core:core:1.19.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.23.0")
