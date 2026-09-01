@@ -47,7 +47,7 @@ jobs:
       # documented path, with one substitution noted below. Its `dart` is
       # shadowed by Flutter's from the next step, which is what makes a package
       # with `sdk: flutter` dependencies resolvable.
-      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260 # v1.7.2
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
 
       # Stands in for flutter-actions/setup-flutter, which the official workflow
       # uses. That action is a composite that pulls in actions/cache@v4, and v4
