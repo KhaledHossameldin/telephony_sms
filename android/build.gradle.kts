@@ -2,7 +2,7 @@ group = "com.khaledhossameldin.telephony_sms"
 version = "1.0-SNAPSHOT"
 
 buildscript {
-    val kotlinVersion = "2.4.10"
+    val kotlinVersion = "2.4.20"
     repositories {
         google()
         mavenCentral()
@@ -84,5 +84,5 @@ dependencies {
     implementation("androidx.core:core:1.18.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
-    testImplementation("org.mockito:mockito-core:5.23.0")
+    testImplementation("org.mockito:mockito-core:5.24.0")
 }
